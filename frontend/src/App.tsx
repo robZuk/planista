@@ -9,6 +9,7 @@ import TimeBlocksPage from '@/pages/TimeBlocksPage';
 import CurriculumPage from '@/pages/CurriculumPage';
 import CurriculumVersionPage from '@/pages/curriculum/CurriculumVersionPage';
 import GroupsPage from '@/pages/GroupsPage';
+import SchedulePage from '@/pages/SchedulePage';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import { AppShell } from '@/components/layout/AppShell';
 import { NAV_ITEMS } from '@/lib/navigation';
@@ -17,6 +18,7 @@ import { NAV_ITEMS } from '@/lib/navigation';
 const PAGES: Record<string, ComponentType> = {
   '/curriculum': CurriculumPage,
   '/groups': GroupsPage,
+  '/schedule': SchedulePage,
   '/faculties': FacultiesPage,
   '/buildings': BuildingsPage,
   '/instructors': InstructorsPage,
@@ -26,7 +28,6 @@ const PAGES: Record<string, ComponentType> = {
 /** W ktorej fazie powstanie strona, ktorej jeszcze nie ma. */
 const PHASE_OF: Record<string, number> = {
   '/': 8,
-  '/schedule': 6,
   '/holidays': 7,
   '/users': 9,
 };

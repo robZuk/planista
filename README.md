@@ -68,7 +68,7 @@ npm run dev               # http://localhost:5174
 - [x] **Faza 3** — Generyczny `DataTable` (TanStack Table) + zasoby: wydziały, budynki/sale (Accordion), prowadzący, bloki czasowe — pełny CRUD z `AlertDialog` przy usuwaniu
 - [x] **Faza 4** — Siatka godzin: zakładki (siatki / kierunki i specjalności / przedmioty), edytor wersji z semestrami w Accordionie, Combobox przedmiotów z wyszukiwaniem po kodzie
 - [x] **Faza 5** — Grupy: dwustopniowy kreator (parametry → podgląd propozycji → zapis), drzewo hierarchii z wcięciami, edycja i kasowanie rocznika
-- [ ] **Faza 6** — Plan zajęć: wzorzec tygodnia z drag&drop
+- [x] **Faza 6** — Plan zajęć: wzorzec tygodnia (siatka dzień × godzina, drag&drop, dialog zajęć, bilans terminów, komunikaty konfliktów po polsku)
 - [ ] **Faza 7** — Plan zajęć: kalendarz semestru, generator, dni wolne
 - [ ] **Faza 8** — Dashboardy per rola + wykresy
 - [ ] **Faza 9** — Użytkownicy, impersonacja, paleta poleceń Ctrl+K
