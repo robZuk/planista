@@ -1,4 +1,4 @@
-import type { AssessmentType, DegreeLevel, RoomType, StudyMode } from '@/types';
+import type { AssessmentType, DegreeLevel, GroupType, RoomType, StudyMode } from '@/types';
 
 /** Polskie nazwy typow sal (backend trzyma enumy po angielsku). */
 export const ROOM_TYPE_LABELS: Record<RoomType, string> = {
@@ -32,3 +32,13 @@ export const ASSESSMENT_TYPE_LABELS: Record<AssessmentType, string> = {
 };
 
 export const ASSESSMENT_TYPES = Object.keys(ASSESSMENT_TYPE_LABELS) as AssessmentType[];
+
+export const GROUP_TYPE_LABELS: Record<GroupType, string> = {
+  LECTURE: 'Wykladowa',
+  EXERCISE: 'Cwiczeniowa',
+  LAB: 'Laboratoryjna',
+  PROJECT: 'Projektowa',
+  SEMINAR: 'Seminaryjna',
+};
+
+export const GROUP_TYPES = Object.keys(GROUP_TYPE_LABELS) as GroupType[];
