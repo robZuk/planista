@@ -1,8 +1,30 @@
 import type { CSSProperties, ReactNode } from 'react';
-import { useDraggable, useDroppable } from '@dnd-kit/core';
+import {
+  KeyboardSensor,
+  PointerSensor,
+  useDraggable,
+  useDroppable,
+  useSensor,
+  useSensors,
+} from '@dnd-kit/core';
 import { CSS } from '@dnd-kit/utilities';
 import { cn } from '@/lib/utils';
 import type { TimeBlock } from '@/types';
+
+/**
+ * Sensory siatki planu.
+ *
+ * `distance: 5` jest tu kluczowe: bez progu aktywacji dnd-kit rozpoczyna
+ * przeciaganie juz na wcisnieciu przycisku i blokuje zdarzenie `click`, przez co
+ * klikniecie w blok zajec NIE otwiera dialogu. Z progiem krotkie klikniecie
+ * dziala normalnie, a przeciaganie zaczyna sie dopiero po ruszeniu myszka o 5 px.
+ */
+export function useScheduleSensors() {
+  return useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor),
+  );
+}
 
 export const ROW_HEIGHT = 52; // px na 1 blok (1 godzina)
 export const HEADER_HEIGHT = 44; // px naglowka kolumny

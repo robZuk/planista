@@ -1,0 +1,255 @@
+import { useEffect, useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { CalendarClock, MapPin, Trash2, User, Users } from 'lucide-react';
+import { toast } from 'sonner';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Field, FieldDescription, FieldGroup, FieldLabel } from '@/components/ui/field';
+import { Input } from '@/components/ui/input';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { Separator } from '@/components/ui/separator';
+import { Spinner } from '@/components/ui/spinner';
+import { ConfirmDialog } from '@/components/ConfirmDialog';
+import { deleteEntry, moveEntry, updateEntryStatus } from '@/api/schedule';
+import { fetchTimeBlocks } from '@/api/timeBlocks';
+import { getScheduleErrorMessage } from '@/lib/scheduleErrors';
+import { CLASS_FULL_LABELS, STATUS_LABELS } from '@/lib/scheduleDisplay';
+import { formatDateLong, toDateKey } from '@/lib/scheduleDates';
+import type { EntryStatus, ScheduleEntry } from '@/types';
+
+interface Props {
+  entry: ScheduleEntry | null;
+  onOpenChange: (open: boolean) => void;
+  canEdit: boolean;
+}
+
+/** Szczegoly jednego terminu: status, przeniesienie i usuniecie. */
+export function EntryDialog({ entry, onOpenChange, canEdit }: Props) {
+  const queryClient = useQueryClient();
+  const { data: blocks } = useQuery({ queryKey: ['time-blocks'], queryFn: fetchTimeBlocks });
+
+  const [moveDate, setMoveDate] = useState('');
+  const [moveStartBlockId, setMoveStartBlockId] = useState('');
+  const [scope, setScope] = useState<'ONE' | 'ALL'>('ONE');
+  const [confirmDelete, setConfirmDelete] = useState(false);
+
+  useEffect(() => {
+    if (!entry) return;
+    setMoveDate(toDateKey(entry.date));
+    setMoveStartBlockId(entry.startBlock.id);
+    setScope('ONE');
+  }, [entry]);
+
+  const invalidate = () => {
+    void queryClient.invalidateQueries({ queryKey: ['schedule-entries'] });
+    void queryClient.invalidateQueries({ queryKey: ['coverage'] });
+  };
+
+  const statusMutation = useMutation({
+    mutationFn: (status: EntryStatus) => updateEntryStatus(entry!.id, status),
+    onSuccess: () => {
+      toast.success('Status zmieniony');
+      invalidate();
+    },
+    onError: (error) => toast.error(getScheduleErrorMessage(error)),
+  });
+
+  const moveMutation = useMutation({
+    mutationFn: () => {
+      const start = blocks?.find((block) => block.id === moveStartBlockId);
+      if (!start) throw new Error('Nieprawidlowy blok');
+      // Dlugosc zajec zostaje bez zmian — przesuwamy tylko poczatek.
+      const span = entry!.endBlock.order - entry!.startBlock.order;
+      const end = blocks?.find((block) => block.order === start.order + span);
+      if (!end) throw new Error('Zajecia nie zmieszcza sie do konca dnia');
+      return moveEntry(entry!.id, {
+        newDate: moveDate,
+        newStartBlockId: start.id,
+        newEndBlockId: end.id,
+        scope,
+      });
+    },
+    onSuccess: (response) => {
+      toast.success(response.message ?? 'Termin przeniesiony');
+      invalidate();
+      onOpenChange(false);
+    },
+    onError: (error) => toast.error(getScheduleErrorMessage(error)),
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: () => deleteEntry(entry!.id),
+    onSuccess: () => {
+      toast.success('Termin usuniety');
+      setConfirmDelete(false);
+      invalidate();
+      onOpenChange(false);
+    },
+    onError: (error) => toast.error(getScheduleErrorMessage(error)),
+  });
+
+  if (!entry) return null;
+
+  const moved = moveDate !== toDateKey(entry.date) || moveStartBlockId !== entry.startBlock.id;
+
+  return (
+    <>
+      <Dialog open={!!entry} onOpenChange={onOpenChange}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{entry.curriculumEntry.subject.name}</DialogTitle>
+            <DialogDescription>
+              {CLASS_FULL_LABELS[entry.classType]} · {formatDateLong(entry.date)} ·{' '}
+              {entry.startBlock.startTime}–{entry.endBlock.endTime}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-2 text-sm">
+            <div className="flex items-center gap-2">
+              <MapPin className="size-4 text-muted-foreground" />
+              {entry.room.building.name} · sala {entry.room.number}
+            </div>
+            <div className="flex items-center gap-2">
+              <User className="size-4 text-muted-foreground" />
+              {`${entry.instructor.title ?? ''} ${entry.instructor.firstName} ${entry.instructor.lastName}`.trim()}
+            </div>
+            <div className="flex items-center gap-2">
+              <Users className="size-4 text-muted-foreground" />
+              {entry.studentGroup?.name ?? 'Caly rocznik'}
+            </div>
+            <div className="flex items-center gap-2">
+              <CalendarClock className="size-4 text-muted-foreground" />
+              <Badge variant={entry.status === 'CANCELLED' ? 'outline' : 'secondary'}>
+                {STATUS_LABELS[entry.status]}
+              </Badge>
+            </div>
+          </div>
+
+          {canEdit && (
+            <>
+              <Separator />
+
+              <FieldGroup>
+                <Field>
+                  <FieldLabel htmlFor="entryStatus">Status</FieldLabel>
+                  <Select
+                    value={entry.status}
+                    onValueChange={(value) => statusMutation.mutate(value as EntryStatus)}
+                  >
+                    <SelectTrigger id="entryStatus">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {(Object.keys(STATUS_LABELS) as EntryStatus[]).map((status) => (
+                        <SelectItem key={status} value={status}>
+                          {STATUS_LABELS[status]}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <FieldDescription>
+                    Odwolane zajecia zostaja w kalendarzu, ale zwalniaja sale i prowadzacego.
+                  </FieldDescription>
+                </Field>
+
+                <Separator />
+
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <Field>
+                    <FieldLabel htmlFor="moveDate">Nowa data</FieldLabel>
+                    <Input
+                      id="moveDate"
+                      type="date"
+                      value={moveDate}
+                      onChange={(event) => setMoveDate(event.target.value)}
+                    />
+                  </Field>
+
+                  <Field>
+                    <FieldLabel htmlFor="moveBlock">Nowa godzina</FieldLabel>
+                    <Select value={moveStartBlockId} onValueChange={setMoveStartBlockId}>
+                      <SelectTrigger id="moveBlock">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {blocks?.map((block) => (
+                          <SelectItem key={block.id} value={block.id}>
+                            {block.startTime}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </Field>
+                </div>
+
+                <Field>
+                  <FieldLabel>Zakres przeniesienia</FieldLabel>
+                  <RadioGroup value={scope} onValueChange={(value) => setScope(value as 'ONE' | 'ALL')}>
+                    <FieldLabel htmlFor="scope-one" className="font-normal">
+                      <RadioGroupItem value="ONE" id="scope-one" />
+                      Tylko ten termin
+                    </FieldLabel>
+                    <FieldLabel htmlFor="scope-all" className="font-normal">
+                      <RadioGroupItem value="ALL" id="scope-all" />
+                      Ten i wszystkie kolejne z tego wzorca
+                    </FieldLabel>
+                  </RadioGroup>
+                </Field>
+              </FieldGroup>
+            </>
+          )}
+
+          <DialogFooter className="sm:justify-between">
+            {canEdit ? (
+              <Button
+                variant="outline"
+                className="text-destructive hover:text-destructive"
+                onClick={() => setConfirmDelete(true)}
+              >
+                <Trash2 />
+                Usun termin
+              </Button>
+            ) : (
+              <span />
+            )}
+            <div className="flex gap-2">
+              <Button variant="outline" onClick={() => onOpenChange(false)}>
+                Zamknij
+              </Button>
+              {canEdit && (
+                <Button onClick={() => moveMutation.mutate()} disabled={!moved || moveMutation.isPending}>
+                  {moveMutation.isPending && <Spinner />}
+                  Przenies
+                </Button>
+              )}
+            </div>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <ConfirmDialog
+        open={confirmDelete}
+        onOpenChange={setConfirmDelete}
+        title="Usunac ten termin?"
+        description="Znika tylko ten jeden termin. Wzorzec tygodnia zostaje, wiec kolejne generowanie moze go odtworzyc."
+        isPending={deleteMutation.isPending}
+        onConfirm={() => deleteMutation.mutate()}
+      />
+    </>
+  );
+}

@@ -1,7 +1,7 @@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { PageHeader } from '@/components/PageHeader';
-import PlaceholderPage from '@/pages/PlaceholderPage';
 import TemplateTab from './schedule/TemplateTab';
+import CalendarTab from './schedule/CalendarTab';
 
 /**
  * Plan zajec ma dwa poziomy, ktore latwo pomylic:
@@ -26,7 +26,7 @@ export default function SchedulePage() {
           <TemplateTab />
         </TabsContent>
         <TabsContent value="calendar" className="mt-4">
-          <PlaceholderPage title="Kalendarz semestru" phase={7} />
+          <CalendarTab />
         </TabsContent>
       </Tabs>
     </>

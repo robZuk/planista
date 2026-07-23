@@ -69,6 +69,6 @@ npm run dev               # http://localhost:5174
 - [x] **Faza 4** — Siatka godzin: zakładki (siatki / kierunki i specjalności / przedmioty), edytor wersji z semestrami w Accordionie, Combobox przedmiotów z wyszukiwaniem po kodzie
 - [x] **Faza 5** — Grupy: dwustopniowy kreator (parametry → podgląd propozycji → zapis), drzewo hierarchii z wcięciami, edycja i kasowanie rocznika
 - [x] **Faza 6** — Plan zajęć: wzorzec tygodnia (siatka dzień × godzina, drag&drop, dialog zajęć, bilans terminów, komunikaty konfliktów po polsku)
-- [ ] **Faza 7** — Plan zajęć: kalendarz semestru, generator, dni wolne
+- [x] **Faza 7** — Plan zajęć: kalendarz tygodniowy z datami, generator terminów, odwoływanie i przenoszenie zajęć (jeden termin / cała seria), dni wolne
 - [ ] **Faza 8** — Dashboardy per rola + wykresy
 - [ ] **Faza 9** — Użytkownicy, impersonacja, paleta poleceń Ctrl+K

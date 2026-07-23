@@ -22,6 +22,7 @@ import {
   DroppableCell,
   ROW_HEIGHT,
   TimeBlockColumn,
+  useScheduleSensors,
 } from '@/components/schedule/ScheduleGrid';
 import { fetchTemplates, updateTemplate } from '@/api/schedule';
 import { fetchEntries, fetchVersions } from '@/api/curriculum';
@@ -47,6 +48,8 @@ export default function TemplateTab() {
   const role = useAuthStore((s) => s.user?.role);
   const canEdit = role === 'ADMIN' || role === 'DEAN_OFFICE' || role === 'INSTRUCTOR';
   const { academicYear, semesterType } = useAcademicYearStore();
+
+  const sensors = useScheduleSensors();
 
   const [studyMode, setStudyMode] = useState<StudyMode>('FULL_TIME');
   const [versionId, setVersionId] = useState('');
@@ -302,7 +305,7 @@ export default function TemplateTab() {
             </Alert>
           )}
 
-          <DndContext collisionDetection={closestCenter} onDragEnd={onDragEnd}>
+          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
             <div className="overflow-x-auto rounded-lg border">
               <div className="flex min-w-max">
                 <TimeBlockColumn blocks={blocks} />
