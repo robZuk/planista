@@ -1,0 +1,443 @@
+// Prisma schema — model danych systemu Planista.
+// Dokumentacja: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  STRUKTURA UCZELNI
+//  Wydzial -> Kierunek -> Specjalnosc
+// ═══════════════════════════════════════════════════════════════
+
+model Faculty {
+  id            String         @id @default(uuid())
+  name          String         @unique // "Wydzial Mechaniczny"
+  shortName     String         @unique // "WM"
+  buildings     Building[]
+  instructors   Instructor[]
+  fieldsOfStudy FieldOfStudy[]
+  createdAt     DateTime       @default(now())
+}
+
+model FieldOfStudy {
+  id              String           @id @default(uuid())
+  name            String // "Eksploatacja i Diagnostyka Systemow Technicznych"
+  shortName       String // "EDST"
+  faculty         Faculty          @relation(fields: [facultyId], references: [id])
+  facultyId       String
+  specializations Specialization[]
+  studentGroups   StudentGroup[]
+  createdAt       DateTime         @default(now())
+
+  @@unique([name, facultyId])
+}
+
+model Specialization {
+  id                 String              @id @default(uuid())
+  name               String // "Diagnostyka Urzadzen Technicznych"
+  shortName          String // "DUT"
+  fieldOfStudy       FieldOfStudy        @relation(fields: [fieldOfStudyId], references: [id])
+  fieldOfStudyId     String
+  curriculumVersions CurriculumVersion[]
+  studentGroups      StudentGroup[]
+  createdAt          DateTime            @default(now())
+
+  @@unique([name, fieldOfStudyId])
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  PLAN STUDIOW (siatka godzin, wersjonowana)
+// ═══════════════════════════════════════════════════════════════
+
+model CurriculumVersion {
+  id             String      @id @default(uuid())
+  academicYear   String // "2024/2025"
+  studyMode      StudyMode
+  degreeLevel    DegreeLevel
+  totalSemesters Int // np. 7
+
+  // Typ semestru, od ktorego program STARTUJE (semestr nr 1).
+  // WINTER = nabor pazdziernikowy (wiekszosc), SUMMER = nabor lutowy (np. czesc II stopnia).
+  // Typ kolejnych semestrow wyliczamy naprzemiennie -> patrz lib/semester.ts (semesterTypeOf).
+  startSemesterType SemesterType @default(WINTER)
+
+  isActive Boolean @default(true)
+  specialization   Specialization    @relation(fields: [specializationId], references: [id])
+  specializationId String
+  entries          CurriculumEntry[]
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  @@unique([specializationId, academicYear, studyMode])
+}
+
+model Subject {
+  id        String            @id @default(uuid())
+  name      String            @unique // "Matematyka I"
+  code      String?           @unique // opcjonalny kod przedmiotu
+  entries   CurriculumEntry[]
+  createdAt DateTime          @default(now())
+}
+
+model CurriculumEntry {
+  id String @id @default(uuid())
+
+  curriculumVersion   CurriculumVersion @relation(fields: [curriculumVersionId], references: [id], onDelete: Cascade)
+  curriculumVersionId String
+
+  subject   Subject @relation(fields: [subjectId], references: [id])
+  subjectId String
+
+  instructor   Instructor? @relation(fields: [instructorId], references: [id])
+  instructorId String?
+
+  semester        Int // 1-7
+  orderInSemester Int // kolejnosc wyswietlania (lp. z siatki)
+
+  hoursLecture  Int @default(0) // W
+  hoursExercise Int @default(0) // C
+  hoursLab      Int @default(0) // L
+  hoursProject  Int @default(0) // P
+  hoursSeminar  Int @default(0) // S
+  ects          Int @default(0)
+
+  assessmentType AssessmentType @default(CREDIT)
+
+  templateEntries ScheduleTemplate[] // wzorce tygodniowe
+  scheduleEntries ScheduleEntry[] // konkretne terminy
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([curriculumVersionId, subjectId, semester])
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  BUDYNKI I SALE
+// ═══════════════════════════════════════════════════════════════
+
+model Building {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  address   String?
+  faculty   Faculty? @relation(fields: [facultyId], references: [id])
+  facultyId String?
+  rooms     Room[]
+  createdAt DateTime @default(now())
+}
+
+model Room {
+  id              String             @id @default(uuid())
+  number          String
+  type            RoomType
+  capacity        Int
+  building        Building           @relation(fields: [buildingId], references: [id])
+  buildingId      String
+  templateEntries ScheduleTemplate[]
+  scheduleEntries ScheduleEntry[]
+  preferredGroups StudentGroup[]
+  createdAt       DateTime           @default(now())
+
+  @@unique([number, buildingId])
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  PROWADZACY
+// ═══════════════════════════════════════════════════════════════
+
+model Instructor {
+  id              String             @id @default(uuid())
+  firstName       String
+  lastName        String
+  email           String             @unique
+  title           String? // "prof. dr hab."
+  faculty         Faculty?           @relation(fields: [facultyId], references: [id])
+  facultyId       String?
+  entries         CurriculumEntry[]
+  templateEntries ScheduleTemplate[]
+  scheduleEntries ScheduleEntry[]
+  user            User? // opcjonalne konto logowania
+  createdAt       DateTime           @default(now())
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  BLOKI CZASOWE (kategoria zarzadzalna przez admina)
+//  Siatka planu opiera sie wylacznie na tych 1-godzinnych blokach.
+//  Zajecia zaczynaja i koncza sie na granicy bloku (pelna godzina).
+// ═══════════════════════════════════════════════════════════════
+
+model TimeBlock {
+  id        String   @id @default(uuid())
+  order     Int      @unique // kolejnosc w siatce: 1, 2, 3, ... (rosnaco wg godziny)
+  startTime String   @unique // "07:00"
+  endTime   String   @unique // "08:00"
+  label     String // "07:00-08:00"
+  createdAt DateTime @default(now())
+
+  // Zajecie moze zajmowac kilka kolejnych blokow: wskazuje blok POCZATKOWY i KONCOWY (wlacznie).
+  templateStarts ScheduleTemplate[] @relation("TemplateStartBlock")
+  templateEnds   ScheduleTemplate[] @relation("TemplateEndBlock")
+  entryStarts    ScheduleEntry[]    @relation("EntryStartBlock")
+  entryEnds      ScheduleEntry[]    @relation("EntryEndBlock")
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  PLAN ZAJEC — wzorzec tygodnia (szablon)
+// ═══════════════════════════════════════════════════════════════
+
+model ScheduleTemplate {
+  id String @id @default(uuid())
+
+  curriculumEntry   CurriculumEntry @relation(fields: [curriculumEntryId], references: [id])
+  curriculumEntryId String
+
+  dayOfWeek DayOfWeek
+
+  // Zakres blokow czasowych (wlacznie). Np. zajecia 8:00-10:00 to
+  // startBlock=08:00-09:00, endBlock=09:00-10:00. Liczba godzin = endBlock.order - startBlock.order + 1.
+  startBlock   TimeBlock @relation("TemplateStartBlock", fields: [startBlockId], references: [id])
+  startBlockId String
+  endBlock     TimeBlock @relation("TemplateEndBlock", fields: [endBlockId], references: [id])
+  endBlockId   String
+
+  classType ClassType // W / C / L / P / S
+  weekType  WeekType  @default(EVERY)
+  studyMode StudyMode @default(FULL_TIME)
+
+  room   Room   @relation(fields: [roomId], references: [id])
+  roomId String
+
+  instructor   Instructor @relation(fields: [instructorId], references: [id])
+  instructorId String
+
+  studentGroup   StudentGroup? @relation(fields: [studentGroupId], references: [id])
+  studentGroupId String?
+
+  semester     Int
+  academicYear String // "2024/2025"
+
+  entries ScheduleEntry[] // wygenerowane konkretne terminy
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  PLAN ZAJEC — konkretne terminy (wygenerowane z szablonu)
+// ═══════════════════════════════════════════════════════════════
+
+model ScheduleEntry {
+  id String @id @default(uuid())
+
+  date      DateTime    // konkretna data zajec
+  status    EntryStatus @default(SCHEDULED)
+  classType ClassType
+
+  // Zakres blokow czasowych (wlacznie) — jak w ScheduleTemplate.
+  startBlock   TimeBlock @relation("EntryStartBlock", fields: [startBlockId], references: [id])
+  startBlockId String
+  endBlock     TimeBlock @relation("EntryEndBlock", fields: [endBlockId], references: [id])
+  endBlockId   String
+
+  template   ScheduleTemplate? @relation(fields: [templateId], references: [id])
+  templateId String? // null dla zajec-odrobien dodanych recznie
+
+  room   Room   @relation(fields: [roomId], references: [id])
+  roomId String
+
+  instructor   Instructor @relation(fields: [instructorId], references: [id])
+  instructorId String
+
+  curriculumEntry   CurriculumEntry @relation(fields: [curriculumEntryId], references: [id])
+  curriculumEntryId String
+
+  studentGroup   StudentGroup? @relation(fields: [studentGroupId], references: [id])
+  studentGroupId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  KALENDARZ SEMESTRU I DNI WOLNE
+// ═══════════════════════════════════════════════════════════════
+
+model SemesterCalendar {
+  id            String       @id @default(uuid())
+  academicYear  String
+  semesterType  SemesterType
+  studyMode     StudyMode
+  startDate     DateTime
+  endDate       DateTime
+  teachingWeeks Int
+  createdAt     DateTime     @default(now())
+
+  @@unique([academicYear, semesterType, studyMode])
+}
+
+model PublicHoliday {
+  id   String   @id @default(uuid())
+  date DateTime @unique
+  name String
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  GRUPY STUDENTOW (z hierarchia rodzic -> dziecko)
+// ═══════════════════════════════════════════════════════════════
+
+model StudentGroup {
+  id String @id @default(uuid())
+
+  // Nazwa generowana automatycznie, np. "EDST-1-W", "EDST-1-C-A", "EDST-1-L-A1"
+  name String
+
+  fieldOfStudy   FieldOfStudy @relation(fields: [fieldOfStudyId], references: [id])
+  fieldOfStudyId String
+
+  // null dla nizszych lat, gdzie nie ma jeszcze podzialu na specjalnosci
+  specialization   Specialization? @relation(fields: [specializationId], references: [id])
+  specializationId String?
+
+  // Grupa jest przypieta do roku studiow i roku akademickiego (NIE do semestru).
+  // Ten sam sklad studentow obsluguje oba semestry danego roku; semestr jest
+  // wlasciwoscia PLANU (ScheduleTemplate/CurriculumEntry), nie grupy.
+  studyYear    Int // 1-4
+  academicYear String // "2024/2025"
+
+  type GroupType
+  size Int
+
+  // Hierarchia: grupa cwiczeniowa moze byc dzieckiem wykladu, laborka dzieckiem cwiczen itd.
+  parentGroup   StudentGroup?  @relation("GroupHierarchy", fields: [parentGroupId], references: [id])
+  parentGroupId String?
+  subGroups     StudentGroup[] @relation("GroupHierarchy")
+
+  preferredRoom   Room?   @relation(fields: [preferredRoomId], references: [id])
+  preferredRoomId String?
+
+  templateEntries ScheduleTemplate[]
+  scheduleEntries ScheduleEntry[]
+  members         User[]             @relation("StudentGroupMembers")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([name, academicYear])
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  AUTH — uzytkownicy i tokeny odswiezania
+// ═══════════════════════════════════════════════════════════════
+
+model User {
+  id       String @id @default(uuid())
+  email    String @unique
+  password String // hash bcrypt
+  role     Role
+  name     String
+
+  // Konto INSTRUCTOR moze byc powiazane z rekordem Instructor (1:1)
+  instructor   Instructor? @relation(fields: [instructorId], references: [id])
+  instructorId String?     @unique
+
+  // Konto STUDENT moze nalezec do wielu grup (M:N)
+  studentGroups StudentGroup[] @relation("StudentGroupMembers")
+
+  refreshTokens RefreshToken[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  token     String   @unique
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  ENUMY
+// ═══════════════════════════════════════════════════════════════
+
+enum StudyMode {
+  FULL_TIME // stacjonarne
+  PART_TIME // niestacjonarne
+}
+
+enum DegreeLevel {
+  BACHELOR // I stopien
+  MASTER // II stopien
+}
+
+enum AssessmentType {
+  EXAM // egzamin
+  CREDIT // zaliczenie
+}
+
+enum RoomType {
+  LECTURE
+  EXERCISE
+  LAB
+  COMPUTER_LAB
+  SEMINAR
+  SPORTS
+}
+
+enum DayOfWeek {
+  MONDAY
+  TUESDAY
+  WEDNESDAY
+  THURSDAY
+  FRIDAY
+  SATURDAY
+  SUNDAY
+}
+
+enum ClassType {
+  LECTURE // W
+  EXERCISE // C
+  LAB // L
+  PROJECT // P
+  SEMINAR // S
+}
+
+enum WeekType {
+  EVERY // co tydzien
+  EVEN // tygodnie parzyste
+  ODD // tygodnie nieparzyste
+}
+
+enum EntryStatus {
+  SCHEDULED // zaplanowane
+  CANCELLED // odwolane
+  MAKEUP // odrobienie (dodane recznie, bez szablonu)
+}
+
+enum SemesterType {
+  WINTER
+  SUMMER
+}
+
+enum GroupType {
+  LECTURE
+  EXERCISE
+  LAB
+  PROJECT
+  SEMINAR
+}
+
+enum Role {
+  ADMIN
+  DEAN_OFFICE
+  INSTRUCTOR
+  STUDENT
+}

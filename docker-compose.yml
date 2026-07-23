@@ -1,0 +1,17 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: planista7_db
+    environment:
+      POSTGRES_DB: planista7
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+    ports:
+      # host 5434 -> container 5432 (5434 zeby nie kolidowac z planista6 na 5433
+      # ani z lokalnym Postgresem na 5432)
+      - "5434:5432"
+    volumes:
+      - planista7_pgdata:/var/lib/postgresql/data
+
+volumes:
+  planista7_pgdata:
