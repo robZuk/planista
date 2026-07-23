@@ -65,7 +65,7 @@ npm run dev               # http://localhost:5174
 - [x] **Faza 0** — Fundamenty: kopia backendu (porty 4001/5434), szkielet Vite + Tailwind 4 + shadcn, motyw granatowy, `/health`
 - [x] **Faza 1** — Layout: AppShell na shadcn Sidebar (zwijany, grupy sekcji), breadcrumbs, menu użytkownika z wyborem motywu
 - [x] **Faza 2** — Auth: logowanie (rhf + zod), store zustand, `ProtectedRoute`, interceptor odświeżania tokenu
-- [ ] **Faza 3** — Generyczny `DataTable` + zasoby (wydziały, budynki/sale, prowadzący, bloki czasowe)
+- [x] **Faza 3** — Generyczny `DataTable` (TanStack Table) + zasoby: wydziały, budynki/sale (Accordion), prowadzący, bloki czasowe — pełny CRUD z `AlertDialog` przy usuwaniu
 - [ ] **Faza 4** — Siatka godzin (kierunki, specjalności, przedmioty, wersje, wpisy)
 - [ ] **Faza 5** — Grupy (generator + edycja, hierarchia)
 - [ ] **Faza 6** — Plan zajęć: wzorzec tygodnia z drag&drop

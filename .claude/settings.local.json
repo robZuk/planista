@@ -1,0 +1,39 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cd /c/projects/planista3 && docker-compose up -d 2>&1)",
+      "Bash(docker ps:*)",
+      "Bash(cd /c/projects/planista3/backend && npm install 2>&1)",
+      "Bash(cd /c/projects/planista3/backend && npx prisma migrate dev --name init 2>&1)",
+      "Bash(cd /c/projects/planista3/backend && npx ts-node prisma/seed.ts 2>&1)",
+      "Bash(taskkill:*)",
+      "Bash(cd /c/projects/planista3/backend && npx tsc --noEmit 2>&1)",
+      "Bash(curl:*)",
+      "Bash(node:*)",
+      "Bash(cd /c/projects/planista3/backend && npx prisma migrate dev --name add_schedule_entry 2>&1)",
+      "Bash(netstat -ano | grep :4000 | grep LISTENING 2>/dev/null)",
+      "Bash(taskkill //PID 22764 //F && sleep 2 && cd /c/projects/planista3/backend && npx prisma generate 2>&1)",
+      "Bash(netstat -ano)",
+      "Bash(xargs -r taskkill //PID //F)",
+      "Bash(npx prisma migrate dev --name add_student_groups)",
+      "Bash(cd /c/projects/planista3/backend && npx prisma generate 2>&1)",
+      "Bash(tail:*)",
+      "Bash(head:*)",
+      "Bash(cd /c/projects/planista3/frontend && npx tsc --noEmit 2>&1)",
+      "Bash(cd:*)",
+      "Bash(cd /c/projects/planista3/frontend && npx shadcn@latest add button input label card table badge tabs dialog select sonner --overwrite --yes 2>&1)",
+      "Bash(xargs -I{} taskkill //PID {} //F)",
+      "Bash(grep:*)",
+      "Bash(cd /c/projects/planista3/backend && npx prisma migrate dev --name add_schedule_templates 2>&1)",
+      "Bash(cd /c/projects/planista3/backend && npx prisma migrate dev --create-only --name add_schedule_templates 2>&1)",
+      "Bash(cd /c/projects/planista3/backend && npx prisma migrate reset --force 2>&1)",
+      "Bash(cd /c/projects/planista3/backend && echo \"y\" | npx prisma migrate dev --name add_schedule_templates 2>&1)",
+      "Bash(echo:*)",
+      "Bash(cat:*)",
+      "Bash(echo EXIT:$?:*)",
+      "mcp__ide__getDiagnostics",
+      "Bash(echo FRONTEND_EXIT:$?:*)",
+      "Bash(echo FRONTEND:$?:*)"
+    ]
+  }
+}
