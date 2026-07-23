@@ -6,12 +6,15 @@ import FacultiesPage from '@/pages/FacultiesPage';
 import BuildingsPage from '@/pages/BuildingsPage';
 import InstructorsPage from '@/pages/InstructorsPage';
 import TimeBlocksPage from '@/pages/TimeBlocksPage';
+import CurriculumPage from '@/pages/CurriculumPage';
+import CurriculumVersionPage from '@/pages/curriculum/CurriculumVersionPage';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import { AppShell } from '@/components/layout/AppShell';
 import { NAV_ITEMS } from '@/lib/navigation';
 
 /** Gotowe strony — reszta tras dostaje zaslepke z numerem fazy. */
 const PAGES: Record<string, ComponentType> = {
+  '/curriculum': CurriculumPage,
   '/faculties': FacultiesPage,
   '/buildings': BuildingsPage,
   '/instructors': InstructorsPage,
@@ -21,7 +24,6 @@ const PAGES: Record<string, ComponentType> = {
 /** W ktorej fazie powstanie strona, ktorej jeszcze nie ma. */
 const PHASE_OF: Record<string, number> = {
   '/': 8,
-  '/curriculum': 4,
   '/schedule': 6,
   '/groups': 5,
   '/holidays': 7,
@@ -59,6 +61,17 @@ export default function App() {
             />
           );
         })}
+
+        {/* Podstrona edytora konkretnej siatki — poza NAV_ITEMS, bo nie ma wlasnej
+            pozycji w menu, ale breadcrumb i podswietlenie dziala przez prefiks /curriculum. */}
+        <Route
+          path="/curriculum/:versionId"
+          element={
+            <ProtectedRoute roles={['ADMIN', 'DEAN_OFFICE', 'INSTRUCTOR']}>
+              <CurriculumVersionPage />
+            </ProtectedRoute>
+          }
+        />
       </Route>
 
       {/* Nieznana sciezka -> strona startowa */}
