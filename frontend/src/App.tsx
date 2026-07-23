@@ -11,12 +11,14 @@ import CurriculumVersionPage from '@/pages/curriculum/CurriculumVersionPage';
 import GroupsPage from '@/pages/GroupsPage';
 import SchedulePage from '@/pages/SchedulePage';
 import HolidaysPage from '@/pages/HolidaysPage';
+import DashboardPage from '@/pages/DashboardPage';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import { AppShell } from '@/components/layout/AppShell';
 import { NAV_ITEMS } from '@/lib/navigation';
 
 /** Gotowe strony — reszta tras dostaje zaslepke z numerem fazy. */
 const PAGES: Record<string, ComponentType> = {
+  '/': DashboardPage,
   '/curriculum': CurriculumPage,
   '/groups': GroupsPage,
   '/schedule': SchedulePage,
@@ -29,7 +31,6 @@ const PAGES: Record<string, ComponentType> = {
 
 /** W ktorej fazie powstanie strona, ktorej jeszcze nie ma. */
 const PHASE_OF: Record<string, number> = {
-  '/': 8,
   '/users': 9,
 };
 
