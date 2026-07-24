@@ -32,7 +32,16 @@ export async function getAll(req: Request, res: Response): Promise<void> {
         ...(status ? { status: status as EntryStatus } : {}),
       },
       include: entryInclude,
-      orderBy: [{ date: 'asc' }, { startBlock: { order: 'asc' } }],
+      // W jednym bloku czasowym siedzi zwykle kilka terminow naraz (rozne grupy i sale),
+      // wiec data + blok to za malo. Grupa i sala ustawiaja je w kolejnosci czytelnej
+      // w siatce, a id domyka porzadek — terminy bez grupy tez maja stale miejsce.
+      orderBy: [
+        { date: 'asc' },
+        { startBlock: { order: 'asc' } },
+        { studentGroup: { name: 'asc' } },
+        { room: { number: 'asc' } },
+        { id: 'asc' },
+      ],
     });
     res.json({ data });
   } catch (error) {

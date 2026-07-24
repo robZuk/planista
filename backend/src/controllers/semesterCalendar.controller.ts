@@ -11,7 +11,10 @@ function weeksBetween(start: Date, end: Date): number {
 export async function getAll(_req: Request, res: Response): Promise<void> {
   try {
     const data = await prisma.semesterCalendar.findMany({
-      orderBy: [{ academicYear: 'asc' }, { semesterType: 'asc' }],
+      // Rok + typ semestru zostawialy remis miedzy trybami studiow. Trojka
+      // [academicYear, semesterType, studyMode] to klucz unikalny kalendarza,
+      // wiec po dolozeniu trybu remis jest juz niemozliwy.
+      orderBy: [{ academicYear: 'asc' }, { semesterType: 'asc' }, { studyMode: 'asc' }],
     });
     res.json({ data });
   } catch (error) {

@@ -8,7 +8,9 @@ export async function getAll(req: Request, res: Response): Promise<void> {
     const data = await prisma.fieldOfStudy.findMany({
       where: facultyId ? { facultyId: String(facultyId) } : undefined,
       include: { faculty: true },
-      orderBy: { name: 'asc' },
+      // Nazwa kierunku jest unikalna dopiero w parze z wydzialem ([name, facultyId]) —
+      // patrz analogiczny komentarz w specializations.controller.
+      orderBy: [{ name: 'asc' }, { faculty: { name: 'asc' } }, { id: 'asc' }],
     });
     res.json({ data });
   } catch (error) {

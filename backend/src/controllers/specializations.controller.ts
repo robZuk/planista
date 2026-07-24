@@ -8,7 +8,10 @@ export async function getAll(req: Request, res: Response): Promise<void> {
     const data = await prisma.specialization.findMany({
       where: fieldOfStudyId ? { fieldOfStudyId: String(fieldOfStudyId) } : undefined,
       include: { fieldOfStudy: { include: { faculty: true } } },
-      orderBy: { name: 'asc' },
+      // Nazwa specjalnosci jest unikalna dopiero w parze z kierunkiem ([name, fieldOfStudyId]),
+      // wiec sama nie porzadkuje listy jednoznacznie. Bez dosortowania dwie specjalnosci
+      // o tej samej nazwie zamienialyby sie miejscami po edycji dowolnej z nich.
+      orderBy: [{ name: 'asc' }, { fieldOfStudy: { name: 'asc' } }, { id: 'asc' }],
     });
     res.json({ data });
   } catch (error) {

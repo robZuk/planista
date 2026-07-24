@@ -26,7 +26,17 @@ export async function getVersions(_req: Request, res: Response): Promise<void> {
         specialization: { include: { fieldOfStudy: { include: { faculty: true } } } },
         _count: { select: { entries: true } },
       },
-      orderBy: [{ academicYear: 'desc' }],
+      // Sam rok akademicki NIE porzadkuje listy jednoznacznie — wszystkie siatki
+      // zwykle maja ten sam rok, wiec Postgres zwracal reszte w kolejnosci fizycznej.
+      // UPDATE przepisuje wiersz na koniec sterty, wiec po kazdym przelaczeniu
+      // "Aktywna" siatka przeskakiwala na dol tabeli. Dosortowanie do pelnego
+      // porzadku (id na koncu jako rozstrzygajace) trzyma kolejnosc w miejscu.
+      orderBy: [
+        { academicYear: 'desc' },
+        { specialization: { name: 'asc' } },
+        { studyMode: 'asc' },
+        { id: 'asc' },
+      ],
     });
     res.json({ data });
   } catch (error) {
