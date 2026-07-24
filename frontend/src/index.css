@@ -141,4 +141,15 @@
   html {
     @apply font-sans;
     }
+  /* Preflight Tailwinda v4 nie rusza kursora przyciskow, a przegladarka daje
+     <button> zwykla strzalke — klikalne elementy niczym sie nie zdradzaly.
+     W aplikacji kazdy z nich (przyciski, wyzwalacze menu i selecta, switche,
+     taby) to prawdziwy <button>, wiec wystarczy jedna regula.
+     Warstwa base, wiec klasa cursor-* w komponencie nadal wygrywa — uchwyt
+     paska bocznego zostaje przy swoim cursor-w-resize, a disabled:cursor-not-allowed
+     przy not-allowed. */
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]) {
+    cursor: pointer;
+    }
 }
