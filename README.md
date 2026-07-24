@@ -51,6 +51,15 @@ npm run dev               # http://localhost:5174
 > **zatrzyma się z błędem** zamiast po cichu przejść na kolejny wolny port — inaczej
 > łatwo pomylić planista7 z uruchomioną obok planista6.
 
+### Dane
+
+W bazie siedzi **zaimportowana kopia z `backup.sql`** (rok 2024/2025): 21 prowadzących,
+191 przedmiotów, 5 siatek godzin z 423 wpisami, 81 grup, 28 sal, 243 wzorce tygodnia
+i 3327 terminów (1.10.2024 – 31.01.2025). Kopia pochodzi ze starszego schematu —
+procedura przeliczenia opisana jest w [`scripts/import-backupu/README.md`](scripts/import-backupu/README.md).
+
+Żeby wrócić do małego zestawu przykładowego, wystarczy `npm run db:seed` w `backend/`.
+
 ### Konta testowe (po seedzie)
 
 | Rola        | Email                   | Hasło            |
