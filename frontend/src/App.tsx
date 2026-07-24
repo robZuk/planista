@@ -1,7 +1,6 @@
 import type { ComponentType } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import LoginPage from '@/pages/LoginPage';
-import PlaceholderPage from '@/pages/PlaceholderPage';
 import FacultiesPage from '@/pages/FacultiesPage';
 import BuildingsPage from '@/pages/BuildingsPage';
 import InstructorsPage from '@/pages/InstructorsPage';
@@ -12,11 +11,12 @@ import GroupsPage from '@/pages/GroupsPage';
 import SchedulePage from '@/pages/SchedulePage';
 import HolidaysPage from '@/pages/HolidaysPage';
 import DashboardPage from '@/pages/DashboardPage';
+import UsersPage from '@/pages/UsersPage';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import { AppShell } from '@/components/layout/AppShell';
 import { NAV_ITEMS } from '@/lib/navigation';
 
-/** Gotowe strony — reszta tras dostaje zaslepke z numerem fazy. */
+/** Strony podpiete pod trasy z NAV_ITEMS. */
 const PAGES: Record<string, ComponentType> = {
   '/': DashboardPage,
   '/curriculum': CurriculumPage,
@@ -27,11 +27,7 @@ const PAGES: Record<string, ComponentType> = {
   '/buildings': BuildingsPage,
   '/instructors': InstructorsPage,
   '/time-blocks': TimeBlocksPage,
-};
-
-/** W ktorej fazie powstanie strona, ktorej jeszcze nie ma. */
-const PHASE_OF: Record<string, number> = {
-  '/users': 9,
+  '/users': UsersPage,
 };
 
 export default function App() {
@@ -55,11 +51,7 @@ export default function App() {
               path={item.to}
               element={
                 <ProtectedRoute roles={item.roles}>
-                  {Page ? (
-                    <Page />
-                  ) : (
-                    <PlaceholderPage title={item.label} phase={PHASE_OF[item.to] ?? 0} />
-                  )}
+                  <Page />
                 </ProtectedRoute>
               }
             />

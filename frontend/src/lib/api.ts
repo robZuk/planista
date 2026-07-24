@@ -23,7 +23,16 @@ const bareClient = axios.create({ baseURL: '/api' });
 let refreshing: Promise<string> | null = null;
 
 async function refreshAccessToken(): Promise<string> {
-  const { refreshToken, setAccessToken, clearAuth } = useAuthStore.getState();
+  const { refreshToken, originalAuth, setAccessToken, stopImpersonating, clearAuth } =
+    useAuthStore.getState();
+
+  // Token podgladowy (impersonacja) jest nieodnawialny. Gdy wygasnie, nie wyrzucamy
+  // admina z aplikacji — konczymy podglad i wracamy do jego wlasnej sesji.
+  if (originalAuth) {
+    stopImpersonating();
+    throw new Error('Sesja podgladu wygasla');
+  }
+
   if (!refreshToken) {
     clearAuth();
     throw new Error('Brak refresh tokenu');
