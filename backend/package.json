@@ -4,7 +4,7 @@
   "description": "Planista6 - backend (Express + TypeScript + Prisma)",
   "main": "dist/index.js",
   "scripts": {
-    "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
+    "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
     "prisma:migrate": "prisma migrate dev",
@@ -31,7 +31,7 @@
     "@types/node": "^20.11.20",
     "prisma": "^5.22.0",
     "ts-node": "^10.9.2",
-    "ts-node-dev": "^2.0.0",
+    "tsx": "^4.23.1",
     "typescript": "^5.4.2"
   }
 }
