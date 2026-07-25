@@ -3,7 +3,8 @@ import bcrypt from 'bcryptjs';
 
 const prisma = new PrismaClient();
 
-const ACADEMIC_YEAR = '2024/2025';
+const ACADEMIC_YEAR = '2024/2025'; // rok "biezacy" — do niego przypisani sa uzytkownicy testowi
+const ACADEMIC_YEARS = ['2023/2024', ACADEMIC_YEAR, '2025/2026']; // dodatkowe lata do testow przelacznika
 
 /**
  * Seed — dane startowe do developmentu.
@@ -82,6 +83,16 @@ async function main() {
     },
   });
 
+  // ─── Przedmioty (slownik wspolny dla calej uczelni) ───────────
+  console.log('📚 Przedmioty...');
+  const subjects = await Promise.all([
+    prisma.subject.create({ data: { name: 'Matematyka I', code: 'EDST-101' } }),
+    prisma.subject.create({ data: { name: 'Fizyka', code: 'EDST-102' } }),
+    prisma.subject.create({
+      data: { name: 'Podstawy Diagnostyki Technicznej', code: 'EDST-103' },
+    }),
+  ]);
+
   // ─── Budynki i sale ──────────────────────────────────────────
   console.log('🏢 Budynki i sale...');
   const buildingA = await prisma.building.create({
@@ -122,44 +133,96 @@ async function main() {
     },
   });
 
-  // ─── Grupy studenckie (wyklad + cwiczenia, rok 1) ────────────
+  // ─── Grupy studenckie (wyklad + cwiczenia, rok 1, po jednej kohorcie na rok) ─
   console.log('👥 Grupy studenckie...');
-  const groupLecture = await prisma.studentGroup.create({
-    data: {
-      name: 'EDST-1-W',
-      fieldOfStudyId: edst.id,
-      studyYear: 1,
-      academicYear: ACADEMIC_YEAR,
-      type: 'LECTURE',
-      size: 60,
-    },
-  });
+  type Group = Awaited<ReturnType<typeof prisma.studentGroup.create>>;
+  const groupsByYear = new Map<string, { lecture: Group; exercise: Group }>();
 
-  const groupExercise = await prisma.studentGroup.create({
-    data: {
-      name: 'EDST-1-C-A',
-      fieldOfStudyId: edst.id,
-      studyYear: 1,
-      academicYear: ACADEMIC_YEAR,
-      type: 'EXERCISE',
-      size: 30,
-      parentGroupId: groupLecture.id, // cwiczenia sa dzieckiem wykladu
-    },
-  });
+  for (const year of ACADEMIC_YEARS) {
+    const lecture = await prisma.studentGroup.create({
+      data: {
+        name: 'EDST-1-W',
+        fieldOfStudyId: edst.id,
+        studyYear: 1,
+        academicYear: year,
+        type: 'LECTURE',
+        size: 60,
+      },
+    });
 
-  // ─── Kalendarz semestru + dni wolne ──────────────────────────
-  console.log('📅 Kalendarz semestru i dni wolne...');
-  await prisma.semesterCalendar.create({
-    data: {
-      academicYear: ACADEMIC_YEAR,
-      semesterType: 'WINTER',
-      studyMode: 'FULL_TIME',
-      startDate: new Date('2024-10-01'),
-      endDate: new Date('2025-02-02'),
-      teachingWeeks: 15,
-    },
-  });
+    const exercise = await prisma.studentGroup.create({
+      data: {
+        name: 'EDST-1-C-A',
+        fieldOfStudyId: edst.id,
+        studyYear: 1,
+        academicYear: year,
+        type: 'EXERCISE',
+        size: 30,
+        parentGroupId: lecture.id, // cwiczenia sa dzieckiem wykladu
+      },
+    });
 
+    groupsByYear.set(year, { lecture, exercise });
+  }
+
+  const { lecture: groupLecture, exercise: groupExercise } = groupsByYear.get(ACADEMIC_YEAR)!;
+
+  // ─── Kalendarz semestru + siatki godzin (kazdy z ACADEMIC_YEARS) ─
+  console.log('📅 Kalendarz semestru i siatki godzin (wiele lat)...');
+  for (const year of ACADEMIC_YEARS) {
+    const startYear = Number(year.split('/')[0]);
+
+    await prisma.semesterCalendar.create({
+      data: {
+        academicYear: year,
+        semesterType: 'WINTER',
+        studyMode: 'FULL_TIME',
+        startDate: new Date(`${startYear}-10-01`),
+        endDate: new Date(`${startYear + 1}-02-02`),
+        teachingWeeks: 15,
+      },
+    });
+
+    await prisma.semesterCalendar.create({
+      data: {
+        academicYear: year,
+        semesterType: 'SUMMER',
+        studyMode: 'FULL_TIME',
+        startDate: new Date(`${startYear + 1}-02-17`),
+        endDate: new Date(`${startYear + 1}-06-22`),
+        teachingWeeks: 15,
+      },
+    });
+
+    const version = await prisma.curriculumVersion.create({
+      data: {
+        academicYear: year,
+        studyMode: 'FULL_TIME',
+        degreeLevel: 'BACHELOR',
+        totalSemesters: 7,
+        startSemesterType: 'WINTER',
+        isActive: year === ACADEMIC_YEAR,
+        specializationId: dut.id,
+      },
+    });
+
+    await prisma.curriculumEntry.createMany({
+      data: subjects.map((subject, i) => ({
+        curriculumVersionId: version.id,
+        subjectId: subject.id,
+        instructorId: kowalski.id,
+        semester: 1,
+        orderInSemester: i + 1,
+        hoursLecture: 30,
+        hoursExercise: i === 0 ? 15 : 0,
+        hoursLab: i === 2 ? 15 : 0,
+        ects: 5,
+        assessmentType: i === 0 ? ('EXAM' as const) : ('CREDIT' as const),
+      })),
+    });
+  }
+
+  console.log('🎉 Dni wolne...');
   await prisma.publicHoliday.createMany({
     data: [
       { date: new Date('2024-11-01'), name: 'Wszystkich Swietych' },

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -36,6 +36,7 @@ import { Spinner } from '@/components/ui/spinner';
 import { PageHeader } from '@/components/PageHeader';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { AcademicYearSelector } from '@/components/AcademicYearSelector';
+import { FacultySelector } from '@/components/FacultySelector';
 import {
   deleteAllGroups,
   deleteGroup,
@@ -43,9 +44,11 @@ import {
   updateGroup,
 } from '@/api/groups';
 import { fetchFieldsOfStudy } from '@/api/fieldsOfStudy';
+import { fetchSpecializations } from '@/api/specializations';
 import { getErrorMessage } from '@/lib/errors';
 import { GROUP_TYPE_LABELS } from '@/lib/labels';
 import { useAcademicYearStore } from '@/store/academicYearStore';
+import { useFacultyFilterStore } from '@/store/facultyStore';
 import { useAuthStore } from '@/store/authStore';
 import { GenerateGroupsDialog } from './groups/GenerateGroupsDialog';
 import { cn } from '@/lib/utils';
@@ -71,8 +74,10 @@ export default function GroupsPage() {
   const queryClient = useQueryClient();
   const canEdit = useAuthStore((s) => s.user?.role) === 'ADMIN';
   const academicYear = useAcademicYearStore((s) => s.academicYear);
+  const facultyId = useFacultyFilterStore((s) => s.facultyId);
 
   const [fieldFilter, setFieldFilter] = useState('all');
+  const [specializationFilter, setSpecializationFilter] = useState('all');
   const [generateOpen, setGenerateOpen] = useState(false);
   const [editing, setEditing] = useState<StudentGroup | null>(null);
   const [deleting, setDeleting] = useState<StudentGroup | null>(null);
@@ -85,6 +90,10 @@ export default function GroupsPage() {
   const { data: fields } = useQuery({
     queryKey: ['fields-of-study'],
     queryFn: () => fetchFieldsOfStudy(),
+  });
+  const { data: specializations } = useQuery({
+    queryKey: ['specializations'],
+    queryFn: () => fetchSpecializations(),
   });
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ['groups'] });
@@ -124,12 +133,56 @@ export default function GroupsPage() {
     onError: (error) => toast.error(getErrorMessage(error)),
   });
 
+  // Grupa nie ma bezposrednio facultyId — wyliczamy go przez jej kierunek (fieldOfStudyId).
+  const fieldFacultyMap = useMemo(
+    () => new Map(fields?.map((field) => [field.id, field.facultyId]) ?? []),
+    [fields],
+  );
+
+  // Kaskada: wydzial zaweza kierunki i specjalnosci, kierunek dodatkowo zaweza specjalnosci.
+  const fieldOptions = useMemo(
+    () => (facultyId === 'all' ? fields : fields?.filter((field) => field.facultyId === facultyId)),
+    [fields, facultyId],
+  );
+
+  const specializationOptions = useMemo(() => {
+    if (fieldFilter !== 'all') {
+      return specializations?.filter((spec) => spec.fieldOfStudyId === fieldFilter);
+    }
+    if (facultyId !== 'all') {
+      return specializations?.filter((spec) => spec.fieldOfStudy?.facultyId === facultyId);
+    }
+    return specializations;
+  }, [specializations, fieldFilter, facultyId]);
+
+  // Jesli wybrany filtr wypadnie poza aktualne opcje (np. zmiana wydzialu wyzej w kaskadzie),
+  // cofamy go na "Wszystkie" zamiast pokazywac martwy wybor.
+  useEffect(() => {
+    if (fieldFilter !== 'all' && !fieldOptions?.some((field) => field.id === fieldFilter)) {
+      setFieldFilter('all');
+    }
+  }, [fieldOptions, fieldFilter]);
+
+  useEffect(() => {
+    if (
+      specializationFilter !== 'all' &&
+      !specializationOptions?.some((spec) => spec.id === specializationFilter)
+    ) {
+      setSpecializationFilter('all');
+    }
+  }, [specializationOptions, specializationFilter]);
+
   const filtered = useMemo(
     () =>
-      fieldFilter === 'all'
-        ? groups
-        : groups?.filter((group) => group.fieldOfStudyId === fieldFilter),
-    [groups, fieldFilter],
+      groups?.filter((group) => {
+        if (fieldFilter !== 'all' && group.fieldOfStudyId !== fieldFilter) return false;
+        if (specializationFilter !== 'all' && group.specializationId !== specializationFilter) {
+          return false;
+        }
+        if (facultyId !== 'all' && fieldFacultyMap.get(group.fieldOfStudyId) !== facultyId) return false;
+        return true;
+      }),
+    [groups, fieldFilter, specializationFilter, facultyId, fieldFacultyMap],
   );
 
   /**
@@ -224,15 +277,29 @@ export default function GroupsPage() {
 
       <div className="flex flex-wrap items-center gap-2">
         <AcademicYearSelector yearOnly />
+        <FacultySelector />
         <Select value={fieldFilter} onValueChange={setFieldFilter}>
           <SelectTrigger className="w-64" aria-label="Kierunek">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">Wszystkie kierunki</SelectItem>
-            {fields?.map((field) => (
+            {fieldOptions?.map((field) => (
               <SelectItem key={field.id} value={field.id}>
                 {field.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Select value={specializationFilter} onValueChange={setSpecializationFilter}>
+          <SelectTrigger className="w-64" aria-label="Specjalnosc">
+            <SelectValue placeholder="Specjalnosc" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Wszystkie specjalnosci</SelectItem>
+            {specializationOptions?.map((spec) => (
+              <SelectItem key={spec.id} value={spec.id}>
+                {spec.name}
               </SelectItem>
             ))}
           </SelectContent>
