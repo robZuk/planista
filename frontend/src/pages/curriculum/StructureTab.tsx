@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Controller, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -47,6 +47,7 @@ import {
 } from '@/api/specializations';
 import { fetchFaculties } from '@/api/faculties';
 import { getErrorMessage } from '@/lib/errors';
+import { useFacultyFilterStore } from '@/store/facultyStore';
 import { useAuthStore } from '@/store/authStore';
 import type { FieldOfStudy, Specialization } from '@/types';
 
@@ -83,6 +84,13 @@ export default function StructureTab() {
     queryFn: () => fetchSpecializations(),
   });
   const { data: faculties } = useQuery({ queryKey: ['faculties'], queryFn: fetchFaculties });
+  const facultyId = useFacultyFilterStore((s) => s.facultyId);
+
+  const visibleFields = useMemo(
+    () =>
+      facultyId === 'all' ? fields : fields?.filter((field) => field.facultyId === facultyId),
+    [fields, facultyId],
+  );
 
   const invalidate = () => {
     void queryClient.invalidateQueries({ queryKey: ['fields-of-study'] });
@@ -168,22 +176,25 @@ export default function StructureTab() {
         </div>
       )}
 
-      {fields?.length === 0 ? (
+      {visibleFields?.length === 0 ? (
         <Empty className="border">
           <EmptyHeader>
             <EmptyMedia variant="icon">
               <GitBranch />
             </EmptyMedia>
-            <EmptyTitle>Brak kierunkow</EmptyTitle>
+            <EmptyTitle>
+              {facultyId === 'all' ? 'Brak kierunkow' : 'Brak kierunkow dla tego wydzialu'}
+            </EmptyTitle>
             <EmptyDescription>
-              Kierunek nalezy do wydzialu, a specjalnosci do kierunku. Bez tego nie da sie utworzyc
-              siatki godzin.
+              {facultyId === 'all'
+                ? 'Kierunek nalezy do wydzialu, a specjalnosci do kierunku. Bez tego nie da sie utworzyc siatki godzin.'
+                : 'Zmien wydzial w przelaczniku powyzej albo dodaj tu nowy kierunek.'}
             </EmptyDescription>
           </EmptyHeader>
         </Empty>
       ) : (
         <Accordion type="multiple" className="w-full">
-          {fields?.map((field) => {
+          {visibleFields?.map((field) => {
             const specs = specializations?.filter((s) => s.fieldOfStudyId === field.id) ?? [];
 
             return (

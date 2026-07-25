@@ -56,6 +56,15 @@ async function main() {
   const wm = await prisma.faculty.create({
     data: { name: 'Wydzial Mechaniczny', shortName: 'WM' },
   });
+  await prisma.faculty.create({
+    data: { name: 'Wydzial Elektryczny', shortName: 'WE' },
+  });
+  await prisma.faculty.create({
+    data: { name: 'Wydzial Nawigacyjny', shortName: 'WN' },
+  });
+  await prisma.faculty.create({
+    data: { name: 'Wydzial Zarzadzania i Nauk o Jakosci', shortName: 'WZNJ' },
+  });
 
   const edst = await prisma.fieldOfStudy.create({
     data: {

@@ -53,6 +53,7 @@ import {
 } from '@/lib/labels';
 import { SEMESTER_TYPE_LABELS } from '@/lib/semester';
 import { useAcademicYearStore } from '@/store/academicYearStore';
+import { useFacultyFilterStore } from '@/store/facultyStore';
 import { useAuthStore } from '@/store/authStore';
 import type { CurriculumVersion, SemesterType } from '@/types';
 
@@ -92,6 +93,7 @@ export default function VersionsTab() {
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [deleting, setDeleting] = useState<CurriculumVersion | null>(null);
+  const facultyId = useFacultyFilterStore((s) => s.facultyId);
 
   const { data: versions, isPending } = useQuery({
     queryKey: ['curriculum-versions'],
@@ -103,9 +105,15 @@ export default function VersionsTab() {
   });
 
   // Rok akademicki to kontekst calego widoku — pokazujemy tylko siatki z wybranego roku.
+  // Wydzial dodatkowo zaweza po fieldOfStudy.faculty (siatka sama nie ma facultyId).
   const visible = useMemo(
-    () => versions?.filter((version) => version.academicYear === academicYear),
-    [versions, academicYear],
+    () =>
+      versions?.filter((version) => {
+        if (version.academicYear !== academicYear) return false;
+        if (facultyId === 'all') return true;
+        return version.specialization?.fieldOfStudy?.faculty?.id === facultyId;
+      }),
+    [versions, academicYear, facultyId],
   );
 
   const form = useForm<VersionValues>({
@@ -288,8 +296,8 @@ export default function VersionsTab() {
               </EmptyMedia>
               <EmptyTitle>Brak siatek dla roku {academicYear}</EmptyTitle>
               <EmptyDescription>
-                Siatka wiaze specjalnosc z rokiem i trybem studiow. Zmien rok w przelaczniku
-                powyzej albo utworz nowa.
+                Siatka wiaze specjalnosc z rokiem i trybem studiow. Zmien rok lub wydzial w
+                przelacznikach powyzej albo utworz nowa.
               </EmptyDescription>
             </EmptyHeader>
           </Empty>

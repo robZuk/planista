@@ -1,5 +1,7 @@
+import { useState } from 'react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { PageHeader } from '@/components/PageHeader';
+import { FacultySelector } from '@/components/FacultySelector';
 import VersionsTab from './curriculum/VersionsTab';
 import StructureTab from './curriculum/StructureTab';
 import SubjectsTab from './curriculum/SubjectsTab';
@@ -11,6 +13,8 @@ import SubjectsTab from './curriculum/SubjectsTab';
  *  - Przedmioty— slownik przedmiotow wspolny dla calej uczelni
  */
 export default function CurriculumPage() {
+  const [tab, setTab] = useState('versions');
+
   return (
     <>
       <PageHeader
@@ -18,12 +22,16 @@ export default function CurriculumPage() {
         description="Program studiow: co, w ktorym semestrze i w jakim wymiarze godzin."
       />
 
-      <Tabs defaultValue="versions">
-        <TabsList>
-          <TabsTrigger value="versions">Siatki</TabsTrigger>
-          <TabsTrigger value="structure">Kierunki i specjalnosci</TabsTrigger>
-          <TabsTrigger value="subjects">Przedmioty</TabsTrigger>
-        </TabsList>
+      <Tabs value={tab} onValueChange={setTab}>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <TabsList>
+            <TabsTrigger value="versions">Siatki</TabsTrigger>
+            <TabsTrigger value="structure">Kierunki i specjalnosci</TabsTrigger>
+            <TabsTrigger value="subjects">Przedmioty</TabsTrigger>
+          </TabsList>
+          {/* Przedmioty sa wspolne dla calej uczelni (brak facultyId), wiec filtr tam nie pasuje. */}
+          {tab !== 'subjects' && <FacultySelector />}
+        </div>
 
         <TabsContent value="versions" className="mt-4">
           <VersionsTab />
