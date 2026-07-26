@@ -16,6 +16,7 @@ import {
 } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { AcademicYearSelector } from '@/components/AcademicYearSelector';
+import { FieldOfStudySelector } from '@/components/FieldOfStudySelector';
 import {
   ColumnHeader,
   DraggableBlock,
@@ -48,6 +49,7 @@ import { STUDY_MODES, STUDY_MODE_LABELS } from '@/lib/labels';
 import { semesterTypeOf } from '@/lib/semester';
 import { useAcademicYearStore } from '@/store/academicYearStore';
 import { useFacultyFilterStore } from '@/store/facultyStore';
+import { useFieldFilterStore } from '@/store/fieldFilterStore';
 import { useAuthStore } from '@/store/authStore';
 import { CoverageCard } from './CoverageCard';
 import { TemplateDialog } from './TemplateDialog';
@@ -59,12 +61,15 @@ export default function TemplateTab() {
   const canEdit = role === 'ADMIN' || role === 'DEAN_OFFICE' || role === 'INSTRUCTOR';
   const { academicYear, semesterType } = useAcademicYearStore();
   const facultyId = useFacultyFilterStore((s) => s.facultyId);
+  const fieldOfStudyId = useFieldFilterStore((s) => s.fieldOfStudyId);
 
   const sensors = useScheduleSensors();
 
   const [studyMode, setStudyMode] = useState<StudyMode>('FULL_TIME');
+  // versionId: konkretna siatka (= specjalnosc w tym roku+trybie), 'all' = wszystkie, '' = brak.
   const [versionId, setVersionId] = useState('');
-  const [semester, setSemester] = useState<number | null>(null);
+  // semester: konkretny numer, 'all' = wszystkie, null = brak dostepnych.
+  const [semester, setSemester] = useState<number | 'all' | null>(null);
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<ScheduleTemplate | null>(null);
@@ -82,7 +87,7 @@ export default function TemplateTab() {
     queryFn: fetchTimeBlocks,
   });
 
-  // Siatki pasujace do kontekstu: ten rok akademicki, tryb studiow i (opc.) wydzial.
+  // Siatki pasujace do kontekstu: ten rok akademicki, tryb studiow oraz (opc.) wydzial i kierunek.
   const availableVersions = useMemo(
     () =>
       versions?.filter(
@@ -90,31 +95,41 @@ export default function TemplateTab() {
           version.academicYear === academicYear &&
           version.studyMode === studyMode &&
           (facultyId === 'all' ||
-            version.specialization?.fieldOfStudy?.faculty?.id === facultyId),
+            version.specialization?.fieldOfStudy?.faculty?.id === facultyId) &&
+          (fieldOfStudyId === 'all' ||
+            version.specialization?.fieldOfStudyId === fieldOfStudyId),
       ) ?? [],
-    [versions, academicYear, studyMode, facultyId],
+    [versions, academicYear, studyMode, facultyId, fieldOfStudyId],
   );
 
   const version = availableVersions.find((item) => item.id === versionId);
+  const allSpecializations = versionId === 'all';
 
-  // Semestry tej siatki, ktore wypadaja w wybranym typie semestru (zima/lato).
+  // Semestry do wyboru: dla konkretnej siatki jej wlasne, dla "Wszystkie" — suma z
+  // wszystkich dostepnych siatek (rozne moga miec inna liczbe/uklad semestrow).
   const semesterOptions = useMemo(() => {
-    if (!version) return [];
-    return Array.from({ length: version.totalSemesters }, (_, i) => i + 1).filter(
-      (number) => semesterTypeOf(version.startSemesterType, number) === semesterType,
-    );
-  }, [version, semesterType]);
+    const source = version ? [version] : allSpecializations ? availableVersions : [];
+    const set = new Set<number>();
+    for (const v of source) {
+      for (let i = 1; i <= v.totalSemesters; i++) {
+        if (semesterTypeOf(v.startSemesterType, i) === semesterType) set.add(i);
+      }
+    }
+    return [...set].sort((a, b) => a - b);
+  }, [version, allSpecializations, availableVersions, semesterType]);
 
   // Po zmianie roku/trybu poprzedni wybor bywa nieaktualny — wracamy do pierwszej opcji.
+  // 'all' (wszystkie specjalnosci) zostawiamy nietkniete, dopoki sa jakiekolwiek siatki.
   useEffect(() => {
     if (availableVersions.length === 0) {
       setVersionId('');
-    } else if (!availableVersions.some((item) => item.id === versionId)) {
+    } else if (versionId !== 'all' && !availableVersions.some((item) => item.id === versionId)) {
       setVersionId(availableVersions[0]!.id);
     }
   }, [availableVersions, versionId]);
 
   useEffect(() => {
+    if (semester === 'all') return; // "Wszystkie semestry" jest zawsze wazne
     if (semesterOptions.length === 0) {
       setSemester(null);
     } else if (semester === null || !semesterOptions.includes(semester)) {
@@ -123,21 +138,33 @@ export default function TemplateTab() {
   }, [semesterOptions, semester]);
 
   const { data: templates, isPending: templatesPending } = useQuery({
-    queryKey: ['templates', academicYear, studyMode, semester, version?.specializationId],
+    queryKey: [
+      'templates',
+      academicYear,
+      studyMode,
+      semester,
+      allSpecializations ? `field:${fieldOfStudyId}` : version?.specializationId,
+    ],
     queryFn: () =>
       fetchTemplates({
         academicYear,
         studyMode,
-        semester: semester!,
-        specializationId: version!.specializationId,
+        ...(semester !== 'all' && semester !== null ? { semester } : {}),
+        // Konkretna siatka -> po specjalnosci; "Wszystkie" -> ewentualnie po kierunku (filtr Kierunek).
+        ...(allSpecializations
+          ? fieldOfStudyId !== 'all'
+            ? { fieldOfStudyId }
+            : {}
+          : { specializationId: version!.specializationId }),
       }),
-    enabled: !!version && semester !== null,
+    enabled: (allSpecializations || !!version) && semester !== null,
   });
 
+  // Wpisy siatki (do CoverageCard i podpowiedzi w dialogu) maja sens tylko dla konkretnej siatki.
   const { data: curriculum } = useQuery({
     queryKey: ['curriculum-entries', versionId],
     queryFn: () => fetchEntries(versionId),
-    enabled: !!versionId,
+    enabled: !allSpecializations && !!versionId,
   });
 
   const { data: groups } = useQuery({
@@ -163,10 +190,12 @@ export default function TemplateTab() {
   );
 
   const semesterEntries =
-    curriculum?.semesters.find((item) => item.semester === semester)?.entries ?? [];
+    typeof semester === 'number'
+      ? (curriculum?.semesters.find((item) => item.semester === semester)?.entries ?? [])
+      : [];
 
   // Grupy z rocznika, do ktorego nalezy semestr: semestry 1-2 to rok 1, 3-4 to rok 2 itd.
-  const studyYear = semester ? Math.ceil(semester / 2) : null;
+  const studyYear = typeof semester === 'number' ? Math.ceil(semester / 2) : null;
   const relevantGroups = useMemo(
     () => groups?.filter((group) => group.studyYear === studyYear) ?? [],
     [groups, studyYear],
@@ -332,11 +361,14 @@ export default function TemplateTab() {
           </SelectContent>
         </Select>
 
+        <FieldOfStudySelector />
+
         <Select value={versionId} onValueChange={setVersionId} disabled={availableVersions.length === 0}>
-          <SelectTrigger className="w-72" aria-label="Siatka godzin">
-            <SelectValue placeholder="Brak siatek dla tego roku i trybu" />
+          <SelectTrigger className="w-72" aria-label="Specjalnosc">
+            <SelectValue placeholder="Brak specjalnosci dla tego roku i trybu" />
           </SelectTrigger>
           <SelectContent>
+            <SelectItem value="all">Wszystkie specjalnosci</SelectItem>
             {availableVersions.map((item) => (
               <SelectItem key={item.id} value={item.id}>
                 {item.specialization?.name ?? 'Siatka'}
@@ -346,14 +378,15 @@ export default function TemplateTab() {
         </Select>
 
         <Select
-          value={semester ? String(semester) : ''}
-          onValueChange={(value) => setSemester(Number(value))}
+          value={semester === null ? '' : String(semester)}
+          onValueChange={(value) => setSemester(value === 'all' ? 'all' : Number(value))}
           disabled={semesterOptions.length === 0}
         >
-          <SelectTrigger className="w-36" aria-label="Semestr">
+          <SelectTrigger className="w-40" aria-label="Semestr">
             <SelectValue placeholder="Semestr" />
           </SelectTrigger>
           <SelectContent>
+            <SelectItem value="all">Wszystkie semestry</SelectItem>
             {semesterOptions.map((number) => (
               <SelectItem key={number} value={String(number)}>
                 Semestr {number}
@@ -362,7 +395,8 @@ export default function TemplateTab() {
           </SelectContent>
         </Select>
 
-        {canEdit && semester !== null && (
+        {/* Dodawanie wymaga konkretnej siatki i semestru — dialog czerpie z nich liste przedmiotow. */}
+        {canEdit && !allSpecializations && typeof semester === 'number' && (
           <Button className="ml-auto" onClick={() => openCreate(days[0]!.key, blocks[0]!.id)}>
             <Plus />
             Dodaj zajecia
@@ -401,7 +435,7 @@ export default function TemplateTab() {
         </Select>
       </div>
 
-      {!version || semester === null ? (
+      {(!version && !allSpecializations) || semester === null ? (
         <Empty className="border">
           <EmptyHeader>
             <EmptyMedia variant="icon">
@@ -416,7 +450,10 @@ export default function TemplateTab() {
         </Empty>
       ) : (
         <>
-          <CoverageCard curriculumVersionId={versionId} semester={semester} />
+          {/* Pokrycie godzin liczymy dla jednej siatki + jednego semestru — nie dla widoku zbiorczego. */}
+          {!allSpecializations && typeof semester === 'number' && (
+            <CoverageCard curriculumVersionId={versionId} semester={semester} />
+          )}
 
           {studyMode === 'PART_TIME' && (
             <Alert>
@@ -523,7 +560,7 @@ export default function TemplateTab() {
             </p>
           )}
 
-          {semesterEntries.length === 0 && (
+          {!allSpecializations && typeof semester === 'number' && semesterEntries.length === 0 && (
             <Badge variant="outline" className="w-fit">
               Uwaga: semestr {semester} tej siatki nie ma zadnych przedmiotow
             </Badge>
@@ -535,7 +572,7 @@ export default function TemplateTab() {
         open={dialogOpen}
         onOpenChange={setDialogOpen}
         academicYear={academicYear}
-        semester={semester ?? 1}
+        semester={typeof semester === 'number' ? semester : 1}
         studyMode={studyMode}
         curriculumEntries={semesterEntries}
         groups={relevantGroups}

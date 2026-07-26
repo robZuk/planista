@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { DndContext, closestCenter, type DragEndEvent, type DragStartEvent } from '@dnd-kit/core';
 import { CalendarDays, CalendarOff, ChevronLeft, ChevronRight, Sparkles } from 'lucide-react';
@@ -15,6 +15,7 @@ import {
 } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { AcademicYearSelector } from '@/components/AcademicYearSelector';
+import { FieldOfStudySelector } from '@/components/FieldOfStudySelector';
 import {
   ColumnHeader,
   DraggableBlock,
@@ -23,7 +24,7 @@ import {
   TimeBlockColumn,
   useScheduleSensors,
 } from '@/components/schedule/ScheduleGrid';
-import { fetchEntries, fetchHolidays, moveEntry } from '@/api/schedule';
+import { fetchCalendars, fetchEntries, fetchHolidays, moveEntry } from '@/api/schedule';
 import { fetchGroups } from '@/api/groups';
 import { fetchBuildings } from '@/api/buildings';
 import { fetchInstructors } from '@/api/instructors';
@@ -45,6 +46,7 @@ import {
 import { useAuthStore } from '@/store/authStore';
 import { useAcademicYearStore } from '@/store/academicYearStore';
 import { useFacultyFilterStore } from '@/store/facultyStore';
+import { useFieldFilterStore } from '@/store/fieldFilterStore';
 import { EntryDialog } from './EntryDialog';
 import { GenerateDialog } from './GenerateDialog';
 import { cn } from '@/lib/utils';
@@ -57,6 +59,7 @@ export default function CalendarTab() {
   const canGenerate = role === 'ADMIN' || role === 'DEAN_OFFICE';
   const { academicYear, semesterType } = useAcademicYearStore();
   const facultyId = useFacultyFilterStore((s) => s.facultyId);
+  const fieldOfStudyId = useFieldFilterStore((s) => s.fieldOfStudyId);
 
   const sensors = useScheduleSensors();
 
@@ -77,6 +80,33 @@ export default function CalendarTab() {
 
   const from = toDateKey(monday);
   const to = toDateKey(addDays(monday, 6));
+
+  const { data: calendars } = useQuery({ queryKey: ['semester-calendars'], queryFn: fetchCalendars });
+
+  // Poczatek wybranego semestru: z kalendarza (rok + typ + tryb), awaryjnie wyliczony z roku.
+  const semesterStart = useMemo(() => {
+    const match = calendars?.find(
+      (c) =>
+        c.academicYear === academicYear &&
+        c.semesterType === semesterType &&
+        c.studyMode === studyMode,
+    );
+    if (match) return startOfWeek(new Date(match.startDate));
+    const firstYear = parseInt(academicYear.split('/')[0] ?? '', 10);
+    if (!firstYear) return null;
+    // WINTER -> 1 pazdziernika roku poczatkowego, SUMMER -> ~17 lutego roku nastepnego.
+    const fallback =
+      semesterType === 'WINTER'
+        ? new Date(Date.UTC(firstYear, 9, 1))
+        : new Date(Date.UTC(firstYear + 1, 1, 17));
+    return startOfWeek(fallback);
+  }, [calendars, academicYear, semesterType, studyMode]);
+
+  // Zmiana roku/semestru/trybu ustawia widok na poczatek tego semestru. Reczna nawigacja
+  // tygodniami zostaje — efekt odpala sie tylko gdy zmieni sie ktorys z tych filtrow.
+  useEffect(() => {
+    if (semesterStart) setMonday(semesterStart);
+  }, [semesterStart]);
 
   const { data: blocks, isPending: blocksPending } = useQuery({
     queryKey: ['time-blocks'],
@@ -119,8 +149,14 @@ export default function CalendarTab() {
     );
   }, [groups, fields]);
 
-  // Niezalezne filtry Sala/Prowadzacy/Wydzial — ograniczaja TYLKO wyswietlane terminy.
-  // Konflikty (podpowiedz przy przeciaganiu) liczymy dalej z pelnych danych tygodnia.
+  // grupa.id -> kierunek.id (fieldOfStudyId).
+  const groupFieldMap = useMemo(
+    () => new Map((groups ?? []).map((g) => [g.id, g.fieldOfStudyId])),
+    [groups],
+  );
+
+  // Niezalezne filtry Sala/Prowadzacy + glowne Wydzial/Kierunek — ograniczaja TYLKO wyswietlane
+  // terminy. Konflikty (podpowiedz przy przeciaganiu) liczymy dalej z pelnych danych tygodnia.
   const visibleEntries = useMemo(
     () =>
       entries?.filter(
@@ -129,9 +165,12 @@ export default function CalendarTab() {
           (instructorFilter === 'all' || entry.instructor.id === instructorFilter) &&
           (facultyId === 'all' ||
             (entry.studentGroup != null &&
-              groupFacultyMap.get(entry.studentGroup.id) === facultyId)),
+              groupFacultyMap.get(entry.studentGroup.id) === facultyId)) &&
+          (fieldOfStudyId === 'all' ||
+            (entry.studentGroup != null &&
+              groupFieldMap.get(entry.studentGroup.id) === fieldOfStudyId)),
       ) ?? [],
-    [entries, roomFilter, instructorFilter, facultyId, groupFacultyMap],
+    [entries, roomFilter, instructorFilter, facultyId, fieldOfStudyId, groupFacultyMap, groupFieldMap],
   );
 
   const holidayByDate = useMemo(() => {
@@ -275,6 +314,8 @@ export default function CalendarTab() {
             ))}
           </SelectContent>
         </Select>
+
+        <FieldOfStudySelector />
 
         {canGenerate && (
           <Button className="ml-auto" onClick={() => setGenerateOpen(true)}>

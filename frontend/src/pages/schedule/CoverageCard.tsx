@@ -44,7 +44,7 @@ export function CoverageCard({
     <Collapsible className="rounded-lg border">
       <CollapsibleTrigger asChild>
         <Button variant="ghost" className="h-auto w-full justify-start gap-4 px-4 py-3">
-          <span className="font-medium">Zrealizowane terminy</span>
+          <span className="font-medium">Zrealizowane terminy (z kalendarza)</span>
           <Progress value={percent} className="h-2 max-w-48" />
           <span className="text-sm tabular-nums text-muted-foreground">
             {planned} / {required} h ({percent}%)
