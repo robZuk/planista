@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { Pencil, Sparkles, Trash2, Users } from 'lucide-react';
+import { Pencil, Plus, Sparkles, Trash2, Users } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   Accordion,
@@ -51,6 +51,7 @@ import { useAcademicYearStore } from '@/store/academicYearStore';
 import { useFacultyFilterStore } from '@/store/facultyStore';
 import { useAuthStore } from '@/store/authStore';
 import { GenerateGroupsDialog } from './groups/GenerateGroupsDialog';
+import { CreateGroupDialog } from './groups/CreateGroupDialog';
 import { cn } from '@/lib/utils';
 import type { GroupType, StudentGroup } from '@/types';
 
@@ -79,6 +80,7 @@ export default function GroupsPage() {
   const [fieldFilter, setFieldFilter] = useState('all');
   const [specializationFilter, setSpecializationFilter] = useState('all');
   const [generateOpen, setGenerateOpen] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
   const [editing, setEditing] = useState<StudentGroup | null>(null);
   const [deleting, setDeleting] = useState<StudentGroup | null>(null);
   const [purgeOpen, setPurgeOpen] = useState(false);
@@ -258,6 +260,10 @@ export default function GroupsPage() {
         actions={
           canEdit && (
             <div className="flex flex-wrap gap-2">
+              <Button variant="outline" onClick={() => setCreateOpen(true)}>
+                <Plus />
+                Dodaj grupe
+              </Button>
               <Button onClick={() => setGenerateOpen(true)}>
                 <Sparkles />
                 Generuj grupy
@@ -360,6 +366,14 @@ export default function GroupsPage() {
         open={generateOpen}
         onOpenChange={setGenerateOpen}
         academicYear={academicYear}
+        onSaved={invalidate}
+      />
+
+      <CreateGroupDialog
+        open={createOpen}
+        onOpenChange={setCreateOpen}
+        academicYear={academicYear}
+        groups={groups}
         onSaved={invalidate}
       />
 

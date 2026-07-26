@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { DndContext, closestCenter, type DragEndEvent } from '@dnd-kit/core';
+import { DndContext, closestCenter, type DragEndEvent, type DragStartEvent } from '@dnd-kit/core';
 import { CalendarDays, Info, Plus } from 'lucide-react';
 import { toast } from 'sonner';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -27,17 +27,27 @@ import {
 import { fetchTemplates, updateTemplate } from '@/api/schedule';
 import { fetchEntries, fetchVersions } from '@/api/curriculum';
 import { fetchGroups } from '@/api/groups';
+import { fetchBuildings } from '@/api/buildings';
+import { fetchInstructors } from '@/api/instructors';
 import { fetchTimeBlocks } from '@/api/timeBlocks';
 import { getScheduleErrorMessage } from '@/lib/scheduleErrors';
 import {
   CLASS_COLORS,
   CLASS_LABELS,
-  WEEK_TYPE_SHORT,
+  WEEK_TYPE_BADGE,
   daysForMode,
 } from '@/lib/scheduleDisplay';
+import {
+  DAY_TO_NUM,
+  getGroupFamilyIds,
+  isTimeWindowOk,
+  rangesOverlap,
+  weekTypesConflict,
+} from '@/lib/scheduleConflicts';
 import { STUDY_MODES, STUDY_MODE_LABELS } from '@/lib/labels';
 import { semesterTypeOf } from '@/lib/semester';
 import { useAcademicYearStore } from '@/store/academicYearStore';
+import { useFacultyFilterStore } from '@/store/facultyStore';
 import { useAuthStore } from '@/store/authStore';
 import { CoverageCard } from './CoverageCard';
 import { TemplateDialog } from './TemplateDialog';
@@ -48,6 +58,7 @@ export default function TemplateTab() {
   const role = useAuthStore((s) => s.user?.role);
   const canEdit = role === 'ADMIN' || role === 'DEAN_OFFICE' || role === 'INSTRUCTOR';
   const { academicYear, semesterType } = useAcademicYearStore();
+  const facultyId = useFacultyFilterStore((s) => s.facultyId);
 
   const sensors = useScheduleSensors();
 
@@ -58,6 +69,9 @@ export default function TemplateTab() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<ScheduleTemplate | null>(null);
   const [prefill, setPrefill] = useState<{ dayOfWeek: DayOfWeek; startBlockId: string } | null>(null);
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const [roomFilter, setRoomFilter] = useState('all');
+  const [instructorFilter, setInstructorFilter] = useState('all');
 
   const { data: versions } = useQuery({
     queryKey: ['curriculum-versions'],
@@ -68,13 +82,17 @@ export default function TemplateTab() {
     queryFn: fetchTimeBlocks,
   });
 
-  // Siatki pasujace do kontekstu: ten rok akademicki i ten tryb studiow.
+  // Siatki pasujace do kontekstu: ten rok akademicki, tryb studiow i (opc.) wydzial.
   const availableVersions = useMemo(
     () =>
       versions?.filter(
-        (version) => version.academicYear === academicYear && version.studyMode === studyMode,
+        (version) =>
+          version.academicYear === academicYear &&
+          version.studyMode === studyMode &&
+          (facultyId === 'all' ||
+            version.specialization?.fieldOfStudy?.faculty?.id === facultyId),
       ) ?? [],
-    [versions, academicYear, studyMode],
+    [versions, academicYear, studyMode, facultyId],
   );
 
   const version = availableVersions.find((item) => item.id === versionId);
@@ -127,6 +145,23 @@ export default function TemplateTab() {
     queryFn: () => fetchGroups({ academicYear }),
   });
 
+  // Konflikty (sala/prowadzacy/grupa) sprawdzamy globalnie dla calego roku, bo backend
+  // tez tak robi — nie tylko w obrebie aktualnie wybranego semestru/trybu/siatki.
+  const { data: allTemplates } = useQuery({
+    queryKey: ['templates', 'all', academicYear],
+    queryFn: () => fetchTemplates({ academicYear }),
+  });
+  const { data: buildings } = useQuery({ queryKey: ['buildings'], queryFn: fetchBuildings });
+  const { data: instructors } = useQuery({ queryKey: ['instructors'], queryFn: fetchInstructors });
+
+  const rooms = useMemo(
+    () =>
+      buildings?.flatMap((building) =>
+        (building.rooms ?? []).map((room) => ({ ...room, buildingName: building.name })),
+      ) ?? [],
+    [buildings],
+  );
+
   const semesterEntries =
     curriculum?.semesters.find((item) => item.semester === semester)?.entries ?? [];
 
@@ -138,6 +173,60 @@ export default function TemplateTab() {
   );
 
   const days = daysForMode(studyMode);
+
+  // Niezalezne filtry Sala/Prowadzacy — ograniczaja TYLKO to, co widac na siatce.
+  // Konflikty (podpowiedz przy przeciaganiu) liczymy dalej z pelnych danych.
+  const visibleTemplates = useMemo(
+    () =>
+      templates?.filter(
+        (template) =>
+          (roomFilter === 'all' || template.room.id === roomFilter) &&
+          (instructorFilter === 'all' || template.instructor.id === instructorFilter),
+      ) ?? [],
+    [templates, roomFilter, instructorFilter],
+  );
+
+  const activeTemplate = templates?.find((item) => item.id === activeId) ?? null;
+
+  // Dla przeciaganego bloku: ktore komorki (dzien::blok) sa wolne, a ktore koliduja
+  // z sala/prowadzacym/grupa (cala rodzina) innego wzorca w tym roku akademickim.
+  // Podglad wizualny — ostateczna walidacja zawsze dzieje sie na backendzie przy zapisie.
+  const cellAvailability = useMemo(() => {
+    if (!activeTemplate || !blocks) return null;
+
+    const span = activeTemplate.endBlock.order - activeTemplate.startBlock.order;
+    const familyIds = activeTemplate.studentGroup
+      ? getGroupFamilyIds(activeTemplate.studentGroup.id, groups ?? [])
+      : [];
+    const others = (allTemplates ?? []).filter((t) => t.id !== activeTemplate.id);
+
+    const map = new Map<string, boolean>();
+    for (const day of days) {
+      for (const startBlock of blocks) {
+        const endBlock = blocks.find((b) => b.order === startBlock.order + span);
+        let available = !!endBlock && isTimeWindowOk(DAY_TO_NUM[day.key], startBlock.startTime, studyMode);
+
+        if (available && endBlock) {
+          const sameDay = others.filter((t) => t.dayOfWeek === day.key);
+          const conflict = sameDay.some((t) => {
+            if (!weekTypesConflict(t.weekType, activeTemplate.weekType)) return false;
+            if (!rangesOverlap(startBlock.order, endBlock.order, t.startBlock.order, t.endBlock.order)) {
+              return false;
+            }
+            return (
+              t.room.id === activeTemplate.room.id ||
+              t.instructor.id === activeTemplate.instructor.id ||
+              (t.studentGroup && familyIds.includes(t.studentGroup.id))
+            );
+          });
+          available = !conflict;
+        }
+
+        map.set(`${day.key}::${startBlock.id}`, available);
+      }
+    }
+    return map;
+  }, [activeTemplate, allTemplates, blocks, days, groups, studyMode]);
 
   const moveMutation = useMutation({
     mutationFn: ({
@@ -158,7 +247,11 @@ export default function TemplateTab() {
     onError: (error) => toast.error(getScheduleErrorMessage(error)),
   });
 
+  const onDragStart = (event: DragStartEvent) => setActiveId(String(event.active.id));
+  const onDragCancel = () => setActiveId(null);
+
   const onDragEnd = (event: DragEndEvent) => {
+    setActiveId(null);
     const { active, over } = event;
     if (!over || !blocks) return;
 
@@ -277,6 +370,37 @@ export default function TemplateTab() {
         )}
       </div>
 
+      {/* Niezalezne filtry — zawezaja co widac na siatce, nie zmieniaja kontekstu (rok/tryb/siatka). */}
+      <div className="flex flex-wrap items-center gap-2">
+        <Select value={roomFilter} onValueChange={setRoomFilter}>
+          <SelectTrigger className="w-56" aria-label="Sala">
+            <SelectValue placeholder="Sala" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Wszystkie sale</SelectItem>
+            {rooms.map((room) => (
+              <SelectItem key={room.id} value={room.id}>
+                {room.buildingName} · {room.number}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+
+        <Select value={instructorFilter} onValueChange={setInstructorFilter}>
+          <SelectTrigger className="w-56" aria-label="Prowadzacy">
+            <SelectValue placeholder="Prowadzacy" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Wszyscy prowadzacy</SelectItem>
+            {instructors?.map((instructor) => (
+              <SelectItem key={instructor.id} value={instructor.id}>
+                {`${instructor.title ? instructor.title + ' ' : ''}${instructor.firstName} ${instructor.lastName}`}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+
       {!version || semester === null ? (
         <Empty className="border">
           <EmptyHeader>
@@ -305,14 +429,21 @@ export default function TemplateTab() {
             </Alert>
           )}
 
-          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
+          <DndContext
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            onDragStart={onDragStart}
+            onDragCancel={onDragCancel}
+            onDragEnd={onDragEnd}
+          >
             <div className="overflow-x-auto rounded-lg border">
               <div className="flex min-w-max">
                 <TimeBlockColumn blocks={blocks} />
 
                 {days.map((day) => {
-                  const dayTemplates =
-                    templates?.filter((template) => template.dayOfWeek === day.key) ?? [];
+                  const dayTemplates = visibleTemplates.filter(
+                    (template) => template.dayOfWeek === day.key,
+                  );
 
                   return (
                     <div key={day.key} className="min-w-44 flex-1 border-r last:border-r-0">
@@ -327,6 +458,13 @@ export default function TemplateTab() {
                             id={`${day.key}::${block.id}`}
                             rowIndex={rowIndex}
                             disabled={!canEdit}
+                            availability={
+                              cellAvailability
+                                ? cellAvailability.get(`${day.key}::${block.id}`)
+                                  ? 'available'
+                                  : 'unavailable'
+                                : undefined
+                            }
                             onClick={canEdit ? () => openCreate(day.key, block.id) : undefined}
                           />
                         ))}
@@ -349,7 +487,7 @@ export default function TemplateTab() {
                               disabled={!canEdit}
                               onClick={() => openEdit(template)}
                             >
-                              <div className="font-medium">
+                              <div className="line-clamp-2 font-medium">
                                 {CLASS_LABELS[template.classType]} ·{' '}
                                 {template.curriculumEntry.subject.name}
                               </div>
@@ -359,9 +497,12 @@ export default function TemplateTab() {
                               {template.studentGroup && (
                                 <div className="opacity-80">{template.studentGroup.name}</div>
                               )}
+                              {/* A/B tylko dla zajec co drugi tydzien — "co tydzien" nie zasmieca kafelka. */}
                               {template.weekType !== 'EVERY' && (
-                                <div className="opacity-80">
-                                  {WEEK_TYPE_SHORT[template.weekType]}
+                                <div className="mt-0.5">
+                                  <span className="rounded bg-black/10 px-1 py-px text-[10px] font-medium dark:bg-white/15">
+                                    {WEEK_TYPE_BADGE[template.weekType]}
+                                  </span>
                                 </div>
                               )}
                             </DraggableBlock>

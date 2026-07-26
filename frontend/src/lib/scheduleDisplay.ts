@@ -50,6 +50,17 @@ export const WEEK_TYPE_SHORT: Record<WeekType, string> = {
   ODD: 'nieparz.',
 };
 
+/**
+ * Etykieta rotacji tygodniowej pokazywana na kazdym bloku wzorca — w nomenklaturze
+ * A/B zamiast parzyste/nieparzyste. Tydzien 1 semestru jest nieparzysty (ODD), stad
+ * ODD = "Tydzien A", EVEN = "Tydzien B".
+ */
+export const WEEK_TYPE_BADGE: Record<WeekType, string> = {
+  EVERY: 'Co tydzien',
+  ODD: 'Tydzien A',
+  EVEN: 'Tydzien B',
+};
+
 export const STATUS_LABELS: Record<EntryStatus, string> = {
   SCHEDULED: 'Zaplanowane',
   CANCELLED: 'Odwolane',

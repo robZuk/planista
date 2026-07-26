@@ -1,5 +1,6 @@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { PageHeader } from '@/components/PageHeader';
+import { FacultySelector } from '@/components/FacultySelector';
 import TemplateTab from './schedule/TemplateTab';
 import CalendarTab from './schedule/CalendarTab';
 
@@ -17,10 +18,13 @@ export default function SchedulePage() {
       />
 
       <Tabs defaultValue="template">
-        <TabsList>
-          <TabsTrigger value="template">Wzorzec tygodnia</TabsTrigger>
-          <TabsTrigger value="calendar">Kalendarz semestru</TabsTrigger>
-        </TabsList>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <TabsList>
+            <TabsTrigger value="template">Wzorzec tygodnia</TabsTrigger>
+            <TabsTrigger value="calendar">Kalendarz semestru</TabsTrigger>
+          </TabsList>
+          <FacultySelector />
+        </div>
 
         <TabsContent value="template" className="mt-4">
           <TemplateTab />

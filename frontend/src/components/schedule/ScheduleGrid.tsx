@@ -26,7 +26,7 @@ export function useScheduleSensors() {
   );
 }
 
-export const ROW_HEIGHT = 52; // px na 1 blok (1 godzina)
+export const ROW_HEIGHT = 72; // px na 1 blok (1 godzina) — mieszczą 4 linie opisu zajec
 export const HEADER_HEIGHT = 44; // px naglowka kolumny
 
 /** Lewa kolumna z godzinami, wyrownana do wierszy siatki. */
@@ -50,16 +50,22 @@ export function TimeBlockColumn({ blocks }: { blocks: TimeBlock[] }) {
 /**
  * Jedna komorka siatki (kolumna x wiersz bloku). `id` = "${columnKey}::${blockId}" —
  * ten format rozbieramy w onDragEnd, zeby wiedziec, gdzie wyladowal blok.
+ *
+ * `availability` — podpowiedz wizualna podczas przeciagania (patrz lib/scheduleConflicts.ts):
+ * 'available' podswietla komorke na zielono, 'unavailable' na czerwono. `undefined`, gdy
+ * nic sie akurat nie przeciaga — wtedy komorka wyglada jak zawsze.
  */
 export function DroppableCell({
   id,
   rowIndex,
   disabled,
+  availability,
   onClick,
 }: {
   id: string;
   rowIndex: number;
   disabled?: boolean;
+  availability?: 'available' | 'unavailable';
   onClick?: () => void;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id, disabled });
@@ -70,9 +76,11 @@ export function DroppableCell({
       onClick={onClick}
       style={{ position: 'absolute', top: rowIndex * ROW_HEIGHT, height: ROW_HEIGHT, left: 0, right: 0 }}
       className={cn(
-        'border-t border-border/60 first:border-transparent',
+        'border-t border-border/60 first:border-transparent transition-colors',
         disabled ? 'cursor-not-allowed' : 'cursor-pointer hover:bg-muted/60',
-        isOver && !disabled && 'bg-accent',
+        !availability && isOver && !disabled && 'bg-accent',
+        availability === 'available' && (isOver ? 'bg-green-500/25' : 'bg-green-500/10'),
+        availability === 'unavailable' && (isOver ? 'bg-red-500/25' : 'bg-red-500/10'),
       )}
     />
   );
