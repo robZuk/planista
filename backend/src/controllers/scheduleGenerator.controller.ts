@@ -2,6 +2,7 @@ import type { Request, Response } from 'express';
 import type { ClassType, SemesterType, StudyMode } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { getGroupFamilyIds } from '../lib/groupFamily';
+import { getCallerFacultyId } from '../lib/callerFaculty';
 import {
   getDatesForDayOfWeek,
   isInStudyModeWindow,
@@ -52,17 +53,22 @@ async function findEntryConflict(
 
 export async function generateSemester(req: Request, res: Response): Promise<void> {
   try {
-    const { templateIds, academicYear, semesterType, studyMode } = req.body as {
+    const { templateIds, academicYear, semesterType, studyMode, facultyId: bodyFacultyId } = req.body as {
       templateIds?: string[];
       academicYear?: string;
       semesterType?: SemesterType;
       studyMode?: StudyMode;
+      facultyId?: string;
     };
 
     if (!templateIds?.length || !academicYear || !semesterType || !studyMode) {
       res.status(400).json({ error: 'Brakujace pola: templateIds, academicYear, semesterType, studyMode' });
       return;
     }
+
+    // Dziekanat rozpisuje tylko wlasny wydzial — nadpisujemy ewentualny facultyId z body.
+    const facultyId =
+      req.user!.role === 'DEAN_OFFICE' ? await getCallerFacultyId(req.user!.id) : bodyFacultyId;
 
     // Zakres dat semestru — z kalendarza lub domyslny.
     const savedCalendar = await prisma.semesterCalendar.findFirst({ where: { academicYear, semesterType, studyMode } });
@@ -76,7 +82,14 @@ export async function generateSemester(req: Request, res: Response): Promise<voi
     const blockByOrder = new Map(allBlocks.map((b) => [b.order, b]));
 
     const templates = await prisma.scheduleTemplate.findMany({
-      where: { id: { in: templateIds } },
+      // Zawezenie do wydzialu — wzorce spoza dozwolonego wydzialu nie zostana rozpisane,
+      // nawet jesli ich id trafi w templateIds (ochrona przed spreparowanym zadaniem).
+      where: {
+        id: { in: templateIds },
+        ...(facultyId
+          ? { curriculumEntry: { curriculumVersion: { specialization: { fieldOfStudy: { facultyId } } } } }
+          : {}),
+      },
       include: {
         curriculumEntry: { include: { subject: { select: { name: true } } } },
         studentGroup: { select: { name: true } },
@@ -132,9 +145,11 @@ export async function generateSemester(req: Request, res: Response): Promise<voi
           continue;
         }
 
-        // Idempotentnosc: wpis z tego wzorca na te date juz istnieje.
+        // Idempotentnosc: wpis z tego wzorca na te date juz istnieje. Dopasowujemy tez po
+        // originalDate — recznie przeniesiony (odczepiony) termin dalej "zajmuje" swoj pierwotny
+        // slot, wiec generator nie odtwarza go jako duplikatu w starym miejscu.
         const alreadyExists = await prisma.scheduleEntry.findFirst({
-          where: { templateId: template.id, date },
+          where: { templateId: template.id, OR: [{ date }, { originalDate: date }] },
           include: { startBlock: { select: { order: true } }, endBlock: { select: { order: true } } },
         });
         if (alreadyExists) {

@@ -1,7 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { DndContext, closestCenter, type DragEndEvent, type DragStartEvent } from '@dnd-kit/core';
-import { CalendarDays, CalendarOff, ChevronLeft, ChevronRight, Sparkles } from 'lucide-react';
+import {
+  DndContext,
+  closestCenter,
+  type DragEndEvent,
+  type DragOverEvent,
+  type DragStartEvent,
+} from '@dnd-kit/core';
+import { CalendarDays, CalendarOff, ChevronLeft, ChevronRight, Pin, Plus, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -19,19 +25,22 @@ import { FieldOfStudySelector } from '@/components/FieldOfStudySelector';
 import {
   ColumnHeader,
   DraggableBlock,
+  DropPreview,
   DroppableCell,
   ROW_HEIGHT,
   TimeBlockColumn,
   useScheduleSensors,
 } from '@/components/schedule/ScheduleGrid';
 import { fetchCalendars, fetchEntries, fetchHolidays, moveEntry } from '@/api/schedule';
+import { fetchVersions, fetchEntries as fetchCurriculumEntries } from '@/api/curriculum';
+import { semesterTypeOf } from '@/lib/semester';
 import { fetchGroups } from '@/api/groups';
 import { fetchBuildings } from '@/api/buildings';
 import { fetchInstructors } from '@/api/instructors';
 import { fetchFieldsOfStudy } from '@/api/fieldsOfStudy';
 import { fetchTimeBlocks } from '@/api/timeBlocks';
 import { getScheduleErrorMessage } from '@/lib/scheduleErrors';
-import { CLASS_COLORS, CLASS_LABELS, daysForMode } from '@/lib/scheduleDisplay';
+import { CLASS_COLORS, CLASS_FULL_LABELS, CLASS_LABELS, CLASS_TYPES, daysForMode } from '@/lib/scheduleDisplay';
 import { getGroupFamilyIds, isTimeWindowOk, rangesOverlap } from '@/lib/scheduleConflicts';
 import { STUDY_MODES, STUDY_MODE_LABELS } from '@/lib/labels';
 import {
@@ -47,7 +56,9 @@ import { useAuthStore } from '@/store/authStore';
 import { useAcademicYearStore } from '@/store/academicYearStore';
 import { useFacultyFilterStore } from '@/store/facultyStore';
 import { useFieldFilterStore } from '@/store/fieldFilterStore';
+import { CoverageCard } from './CoverageCard';
 import { EntryDialog } from './EntryDialog';
+import { EntryCreateDialog } from './EntryCreateDialog';
 import { GenerateDialog } from './GenerateDialog';
 import { cn } from '@/lib/utils';
 import type { ScheduleEntry, StudyMode } from '@/types';
@@ -65,11 +76,22 @@ export default function CalendarTab() {
 
   const [studyMode, setStudyMode] = useState<StudyMode>('FULL_TIME');
   const [monday, setMonday] = useState(() => startOfWeek(new Date()));
-  const [selectedEntry, setSelectedEntry] = useState<ScheduleEntry | null>(null);
+  // Trzymamy tylko id, a obiekt wyprowadzamy z zywych danych — inaczej po zmianie statusu
+  // dialog pokazywalby migawke sprzed odswiezenia (status stary, mimo udanej zmiany).
+  const [selectedEntryId, setSelectedEntryId] = useState<string | null>(null);
   const [generateOpen, setGenerateOpen] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [createPrefill, setCreatePrefill] = useState<{ date: string; startBlockId?: string } | null>(
+    null,
+  );
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [overId, setOverId] = useState<string | null>(null);
   const [roomFilter, setRoomFilter] = useState('all');
   const [instructorFilter, setInstructorFilter] = useState('all');
+  const [classTypeFilter, setClassTypeFilter] = useState('all');
+  // Filtry wyswietlania — jak w widoku wzorca tygodnia. 'all' = bez zawezania.
+  const [versionFilter, setVersionFilter] = useState('all');
+  const [semesterFilter, setSemesterFilter] = useState<number | 'all'>('all');
 
   const days = daysForMode(studyMode);
   const allWeekDates = weekDates(monday);
@@ -116,6 +138,8 @@ export default function CalendarTab() {
     queryKey: ['schedule-entries', from, to],
     queryFn: () => fetchEntries({ from, to }),
   });
+  // Zaznaczony termin liczymy z aktualnych danych, zeby dialog zawsze mial swiezy status.
+  const selectedEntry = entries?.find((e) => e.id === selectedEntryId) ?? null;
   const { data: holidays } = useQuery({
     queryKey: ['holidays', from, to],
     queryFn: () => fetchHolidays({ from, to }),
@@ -132,6 +156,67 @@ export default function CalendarTab() {
     queryKey: ['fields-of-study'],
     queryFn: () => fetchFieldsOfStudy(),
   });
+  // Siatki (= specjalnosci) — do filtra Specjalnosc, tak samo jak w widoku wzorca tygodnia.
+  const { data: versions } = useQuery({
+    queryKey: ['curriculum-versions'],
+    queryFn: fetchVersions,
+  });
+
+  // Wpisy siatki wybranej specjalnosci — potrzebne do listy przedmiotow w oknie recznego dodawania.
+  const { data: curriculum } = useQuery({
+    queryKey: ['curriculum-entries', versionFilter],
+    queryFn: () => fetchCurriculumEntries(versionFilter),
+    enabled: versionFilter !== 'all',
+  });
+
+  // Siatki pasujace do kontekstu: ten rok, tryb oraz (opc.) wydzial i kierunek — jak w TemplateTab.
+  const availableVersions = useMemo(
+    () =>
+      versions?.filter(
+        (version) =>
+          version.academicYear === academicYear &&
+          version.studyMode === studyMode &&
+          (facultyId === 'all' ||
+            version.specialization?.fieldOfStudy?.faculty?.id === facultyId) &&
+          (fieldOfStudyId === 'all' ||
+            version.specialization?.fieldOfStudyId === fieldOfStudyId),
+      ) ?? [],
+    [versions, academicYear, studyMode, facultyId, fieldOfStudyId],
+  );
+
+  // specjalnosc wybranej siatki — po niej filtrujemy terminy (przez curriculumVersion terminu).
+  const selectedSpecializationId = useMemo(
+    () => availableVersions.find((v) => v.id === versionFilter)?.specializationId ?? null,
+    [availableVersions, versionFilter],
+  );
+
+  // Semestry do wyboru: dla konkretnej siatki jej wlasne, dla "Wszystkie" — suma z dostepnych.
+  const semesterOptions = useMemo(() => {
+    const source = availableVersions.filter(
+      (v) => versionFilter === 'all' || v.id === versionFilter,
+    );
+    const set = new Set<number>();
+    for (const v of source) {
+      for (let i = 1; i <= v.totalSemesters; i++) {
+        if (semesterTypeOf(v.startSemesterType, i) === semesterType) set.add(i);
+      }
+    }
+    return [...set].sort((a, b) => a - b);
+  }, [availableVersions, versionFilter, semesterType]);
+
+  // Gdy zmiana roku/trybu/wydzialu/kierunku uniewazni wybrana specjalnosc — wracamy na "Wszystkie".
+  useEffect(() => {
+    if (versionFilter !== 'all' && !availableVersions.some((v) => v.id === versionFilter)) {
+      setVersionFilter('all');
+    }
+  }, [availableVersions, versionFilter]);
+
+  // Analogicznie semestr — gdy wypadnie z dostepnych (np. po zmianie typu semestru).
+  useEffect(() => {
+    if (semesterFilter !== 'all' && !semesterOptions.includes(semesterFilter)) {
+      setSemesterFilter('all');
+    }
+  }, [semesterOptions, semesterFilter]);
 
   const rooms = useMemo(
     () =>
@@ -155,6 +240,53 @@ export default function CalendarTab() {
     [groups],
   );
 
+  // Reczne dodawanie terminu wymaga konkretnej siatki + semestru (stad bierzemy przedmioty i grupy).
+  const canAddEntry =
+    canEdit && versionFilter !== 'all' && typeof semesterFilter === 'number';
+
+  const semesterEntries = useMemo(
+    () =>
+      typeof semesterFilter === 'number'
+        ? (curriculum?.semesters.find((s) => s.semester === semesterFilter)?.entries ?? [])
+        : [],
+    [curriculum, semesterFilter],
+  );
+
+  // Grupy zawezone do kontekstu okna dodawania: ten sam kierunek + rocznik semestru
+  // (1-2 = rok 1, 3-4 = rok 2 itd.) oraz wybrana specjalnosc. Grupy bez podzialu na
+  // specjalnosc (specializationId = null) obsluguja caly kierunek, wiec je zostawiamy.
+  const relevantGroups = useMemo(() => {
+    if (typeof semesterFilter !== 'number' || versionFilter === 'all') return [];
+    const version = availableVersions.find((v) => v.id === versionFilter);
+    const fieldOfStudyId = version?.specialization?.fieldOfStudyId ?? null;
+    const studyYear = Math.ceil(semesterFilter / 2);
+    return (
+      groups?.filter(
+        (g) =>
+          g.studyYear === studyYear &&
+          g.studyMode === studyMode &&
+          g.fieldOfStudyId === fieldOfStudyId &&
+          (g.specializationId === null || g.specializationId === selectedSpecializationId),
+      ) ?? []
+    );
+  }, [groups, semesterFilter, versionFilter, availableVersions, selectedSpecializationId, studyMode]);
+
+  const openCreate = (date: string, startBlockId?: string) => {
+    setCreatePrefill({ date, startBlockId });
+    setCreateOpen(true);
+  };
+
+  // Klik w pusta komorke: dodawanie potrzebuje konkretnej siatki + semestru (stad lista
+  // przedmiotow). Bez nich nie otwieramy okna, tylko podpowiadamy, co wybrac.
+  const handleCellClick = (date: string, startBlockId: string) => {
+    if (!canEdit) return;
+    if (!canAddEntry) {
+      toast.info('Wybierz specjalnosc i semestr, aby dodac zajecia recznie');
+      return;
+    }
+    openCreate(date, startBlockId);
+  };
+
   // Niezalezne filtry Sala/Prowadzacy + glowne Wydzial/Kierunek — ograniczaja TYLKO wyswietlane
   // terminy. Konflikty (podpowiedz przy przeciaganiu) liczymy dalej z pelnych danych tygodnia.
   const visibleEntries = useMemo(
@@ -163,14 +295,31 @@ export default function CalendarTab() {
         (entry) =>
           (roomFilter === 'all' || entry.room.id === roomFilter) &&
           (instructorFilter === 'all' || entry.instructor.id === instructorFilter) &&
+          (classTypeFilter === 'all' || entry.classType === classTypeFilter) &&
           (facultyId === 'all' ||
             (entry.studentGroup != null &&
               groupFacultyMap.get(entry.studentGroup.id) === facultyId)) &&
           (fieldOfStudyId === 'all' ||
             (entry.studentGroup != null &&
-              groupFieldMap.get(entry.studentGroup.id) === fieldOfStudyId)),
+              groupFieldMap.get(entry.studentGroup.id) === fieldOfStudyId)) &&
+          (versionFilter === 'all' ||
+            entry.curriculumEntry.curriculumVersion.specializationId ===
+              selectedSpecializationId) &&
+          (semesterFilter === 'all' || entry.curriculumEntry.semester === semesterFilter),
       ) ?? [],
-    [entries, roomFilter, instructorFilter, facultyId, fieldOfStudyId, groupFacultyMap, groupFieldMap],
+    [
+      entries,
+      roomFilter,
+      instructorFilter,
+      classTypeFilter,
+      facultyId,
+      fieldOfStudyId,
+      groupFacultyMap,
+      groupFieldMap,
+      versionFilter,
+      selectedSpecializationId,
+      semesterFilter,
+    ],
   );
 
   const holidayByDate = useMemo(() => {
@@ -247,11 +396,31 @@ export default function CalendarTab() {
     onError: (error) => toast.error(getScheduleErrorMessage(error)),
   });
 
+  // Ramka podgladu pod kursorem: gdzie (data + wiersz) i na ilu blokach wyladuje termin.
+  // blockCount = pelna dlugosc zajec, wiec przy zajeciach podwojnych podpowiedz obejmuje oba
+  // pola, nie jedno. Przycinamy do konca dnia, zeby ramka nie wychodzila poza siatke.
+  const dropPreview = useMemo(() => {
+    if (!overId || !activeEntry || !blocks) return null;
+    const [dateKey, blockId] = overId.split('::');
+    const startIndex = blocks.findIndex((b) => b.id === blockId);
+    if (!dateKey || startIndex === -1) return null;
+    const span = activeEntry.endBlock.order - activeEntry.startBlock.order;
+    const blockCount = Math.min(span + 1, blocks.length - startIndex);
+    const available = !!cellAvailability?.get(overId);
+    return { dateKey, startIndex, blockCount, available };
+  }, [overId, activeEntry, blocks, cellAvailability]);
+
   const onDragStart = (event: DragStartEvent) => setActiveId(String(event.active.id));
-  const onDragCancel = () => setActiveId(null);
+  const onDragOver = (event: DragOverEvent) =>
+    setOverId(event.over ? String(event.over.id) : null);
+  const onDragCancel = () => {
+    setActiveId(null);
+    setOverId(null);
+  };
 
   const onDragEnd = (event: DragEndEvent) => {
     setActiveId(null);
+    setOverId(null);
     const { active, over } = event;
     if (!over || !blocks) return;
 
@@ -317,12 +486,56 @@ export default function CalendarTab() {
 
         <FieldOfStudySelector />
 
-        {canGenerate && (
-          <Button className="ml-auto" onClick={() => setGenerateOpen(true)}>
-            <Sparkles />
-            Generuj semestr
-          </Button>
-        )}
+        <Select
+          value={versionFilter}
+          onValueChange={setVersionFilter}
+          disabled={availableVersions.length === 0}
+        >
+          <SelectTrigger className="w-72" aria-label="Specjalnosc">
+            <SelectValue placeholder="Specjalnosc" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Wszystkie specjalnosci</SelectItem>
+            {availableVersions.map((item) => (
+              <SelectItem key={item.id} value={item.id}>
+                {item.specialization?.name ?? 'Siatka'}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+
+        <Select
+          value={String(semesterFilter)}
+          onValueChange={(value) => setSemesterFilter(value === 'all' ? 'all' : Number(value))}
+          disabled={semesterOptions.length === 0}
+        >
+          <SelectTrigger className="w-40" aria-label="Semestr">
+            <SelectValue placeholder="Semestr" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Wszystkie semestry</SelectItem>
+            {semesterOptions.map((number) => (
+              <SelectItem key={number} value={String(number)}>
+                Semestr {number}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+
+        <div className="ml-auto flex gap-2">
+          {canAddEntry && (
+            <Button variant="outline" onClick={() => openCreate(from)}>
+              <Plus />
+              Dodaj zajecia
+            </Button>
+          )}
+          {canGenerate && (
+            <Button onClick={() => setGenerateOpen(true)}>
+              <Sparkles />
+              Generuj semestr
+            </Button>
+          )}
+        </div>
       </div>
 
       {/* Niezalezne filtry — zawezaja co widac na siatce, nie zmieniaja kontekstu (rok/tryb). */}
@@ -354,7 +567,27 @@ export default function CalendarTab() {
             ))}
           </SelectContent>
         </Select>
+
+        <Select value={classTypeFilter} onValueChange={setClassTypeFilter}>
+          <SelectTrigger className="w-56" aria-label="Forma zajec">
+            <SelectValue placeholder="Forma zajec" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Wszystkie formy</SelectItem>
+            {CLASS_TYPES.map((type) => (
+              <SelectItem key={type} value={type}>
+                {CLASS_FULL_LABELS[type]}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
+
+      {/* Bilans pokrycia semestru liczymy dla JEDNEJ siatki + semestru, wiec pokazujemy go tylko
+          gdy filtry sa zawezone do konkretnej specjalnosci i semestru (nie "Wszystkie"). */}
+      {versionFilter !== 'all' && semesterFilter !== 'all' && (
+        <CoverageCard curriculumVersionId={versionFilter} semester={semesterFilter} />
+      )}
 
       <div className="flex flex-wrap items-center gap-2">
         <Button variant="outline" size="icon" aria-label="Poprzedni tydzien" onClick={() => setMonday(addDays(monday, -7))}>
@@ -377,6 +610,7 @@ export default function CalendarTab() {
         sensors={sensors}
         collisionDetection={closestCenter}
         onDragStart={onDragStart}
+        onDragOver={onDragOver}
         onDragCancel={onDragCancel}
         onDragEnd={onDragEnd}
       >
@@ -417,8 +651,17 @@ export default function CalendarTab() {
                               : 'unavailable'
                             : undefined
                         }
+                        onClick={canEdit ? () => handleCellClick(dateKey, block.id) : undefined}
                       />
                     ))}
+
+                    {dropPreview?.dateKey === dateKey && (
+                      <DropPreview
+                        startRowIndex={dropPreview.startIndex}
+                        blockCount={dropPreview.blockCount}
+                        available={dropPreview.available}
+                      />
+                    )}
 
                     {dayEntries.map((entry) => {
                       const startIndex = blocks.findIndex((block) => block.id === entry.startBlock.id);
@@ -438,9 +681,13 @@ export default function CalendarTab() {
                             cancelled && 'opacity-50 line-through',
                           )}
                           disabled={!canEdit}
-                          onClick={() => setSelectedEntry(entry)}
+                          onClick={() => setSelectedEntryId(entry.id)}
                         >
                           <div className="font-medium">
+                            {/* Odczepiony termin — pinezka sygnalizuje, ze nie idzie za seria. */}
+                            {entry.detached && (
+                              <Pin className="mr-1 inline size-3 -translate-y-px" aria-label="odczepiony" />
+                            )}
                             {CLASS_LABELS[entry.classType]} · {entry.curriculumEntry.subject.name}
                           </div>
                           <div className="opacity-80">
@@ -477,7 +724,7 @@ export default function CalendarTab() {
 
       <EntryDialog
         entry={selectedEntry}
-        onOpenChange={(open) => !open && setSelectedEntry(null)}
+        onOpenChange={(open) => !open && setSelectedEntryId(null)}
         canEdit={canEdit}
       />
 
@@ -487,6 +734,16 @@ export default function CalendarTab() {
         academicYear={academicYear}
         semesterType={semesterType}
         studyMode={studyMode}
+        facultyId={facultyId}
+      />
+
+      <EntryCreateDialog
+        open={createOpen}
+        onOpenChange={setCreateOpen}
+        studyMode={studyMode}
+        curriculumEntries={semesterEntries}
+        groups={relevantGroups}
+        prefill={createPrefill}
       />
     </div>
   );

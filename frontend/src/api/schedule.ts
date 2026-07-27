@@ -21,6 +21,7 @@ export async function fetchTemplates(filters: {
   studentGroupId?: string;
   fieldOfStudyId?: string;
   specializationId?: string;
+  facultyId?: string;
 }): Promise<ScheduleTemplate[]> {
   const res = await api.get('/schedule/templates', { params: filters });
   return res.data.data;
@@ -92,6 +93,7 @@ export async function generateSemesterEntries(input: {
   academicYear: string;
   semesterType: SemesterType;
   studyMode: StudyMode;
+  facultyId?: string;
 }): Promise<{ data: GenerateResult; message: string }> {
   const res = await api.post('/schedule/generate', input);
   return res.data;

@@ -6,6 +6,7 @@ export async function fetchGroups(filters: {
   specializationId?: string;
   studyYear?: number;
   academicYear?: string;
+  studyMode?: StudyMode;
 }): Promise<StudentGroup[]> {
   const res = await api.get('/groups', { params: filters });
   return res.data.data;
@@ -39,6 +40,7 @@ export async function confirmGroups(input: {
   fieldOfStudyId: string;
   specializationId?: string;
   academicYear: string;
+  studyMode?: StudyMode;
   proposal: GroupProposalItem[];
 }): Promise<StudentGroup[]> {
   const res = await api.post('/groups/confirm', input);
@@ -53,6 +55,7 @@ export interface CreateGroupInput {
   specializationId?: string;
   studyYear: number;
   academicYear: string;
+  studyMode?: StudyMode;
   parentGroupId?: string;
   preferredRoomId?: string;
 }

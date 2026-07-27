@@ -83,6 +83,7 @@ export default function InstructorsPage() {
   // Filtr wydzialu dziala obok globalnej szukajki DataTable, wiec zawezamy dane wejsciowe.
   const visible = useMemo(() => {
     if (facultyFilter === 'all') return instructors;
+    if (facultyFilter === NO_FACULTY) return instructors?.filter((i) => !i.facultyId);
     return instructors?.filter((i) => i.facultyId === facultyFilter);
   }, [instructors, facultyFilter]);
 
@@ -225,6 +226,7 @@ export default function InstructorsPage() {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">Wszystkie wydzialy</SelectItem>
+              <SelectItem value={NO_FACULTY}>Ogolnouczelniani</SelectItem>
               {faculties?.map((faculty) => (
                 <SelectItem key={faculty.id} value={faculty.id}>
                   {faculty.name}

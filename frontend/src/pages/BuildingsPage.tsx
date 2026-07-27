@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Controller, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -99,12 +99,20 @@ export default function BuildingsPage() {
   const [roomDialog, setRoomDialog] = useState(false);
   const [roomTarget, setRoomTarget] = useState<{ buildingId: string; room: Room | null } | null>(null);
   const [deletingRoom, setDeletingRoom] = useState<RoomRef | null>(null);
+  const [facultyFilter, setFacultyFilter] = useState<string>('all');
 
   const { data: buildings, isPending } = useQuery({
     queryKey: ['buildings'],
     queryFn: fetchBuildings,
   });
   const { data: faculties } = useQuery({ queryKey: ['faculties'], queryFn: fetchFaculties });
+
+  // Budynek ma opcjonalny wydzial — filtr zawezamy tu, obok listy w Accordionie.
+  const visible = useMemo(() => {
+    if (facultyFilter === 'all') return buildings;
+    if (facultyFilter === NO_FACULTY) return buildings?.filter((b) => !b.facultyId);
+    return buildings?.filter((b) => b.facultyId === facultyFilter);
+  }, [buildings, facultyFilter]);
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ['buildings'] });
 
@@ -237,9 +245,40 @@ export default function BuildingsPage() {
           </EmptyHeader>
         </Empty>
       ) : (
-        // type="multiple" — mozna miec otwartych kilka budynkow naraz przy porownywaniu sal.
-        <Accordion type="multiple" className="w-full">
-          {buildings?.map((building) => {
+        <>
+          <div className="mb-4">
+            <Select value={facultyFilter} onValueChange={setFacultyFilter}>
+              <SelectTrigger className="w-56" aria-label="Wydzial">
+                <SelectValue placeholder="Wydzial" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Wszystkie wydzialy</SelectItem>
+                <SelectItem value={NO_FACULTY}>Ogolnouczelniane</SelectItem>
+                {faculties?.map((faculty) => (
+                  <SelectItem key={faculty.id} value={faculty.id}>
+                    {faculty.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          {visible?.length === 0 ? (
+            <Empty className="border">
+              <EmptyHeader>
+                <EmptyMedia variant="icon">
+                  <Building2 />
+                </EmptyMedia>
+                <EmptyTitle>Brak budynkow dla tego filtra</EmptyTitle>
+                <EmptyDescription>
+                  Zaden budynek nie pasuje do wybranego wydzialu — zmien filtr powyzej.
+                </EmptyDescription>
+              </EmptyHeader>
+            </Empty>
+          ) : (
+            // type="multiple" — mozna miec otwartych kilka budynkow naraz przy porownywaniu sal.
+            <Accordion type="multiple" className="w-full">
+              {visible?.map((building) => {
             const rooms = building.rooms ?? [];
             const seats = rooms.reduce((sum, room) => sum + room.capacity, 0);
 
@@ -351,8 +390,10 @@ export default function BuildingsPage() {
                 </AccordionContent>
               </AccordionItem>
             );
-          })}
-        </Accordion>
+              })}
+            </Accordion>
+          )}
+        </>
       )}
 
       {/* ─── Dialog budynku ─── */}

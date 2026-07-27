@@ -46,6 +46,7 @@ import {
 } from '@/api/users';
 import { fetchInstructors } from '@/api/instructors';
 import { fetchGroups } from '@/api/groups';
+import { fetchFaculties } from '@/api/faculties';
 import { getErrorMessage } from '@/lib/errors';
 import { ROLE_LABELS } from '@/lib/navigation';
 import { formatDateLong } from '@/lib/scheduleDates';
@@ -70,6 +71,7 @@ function userSchema(isEdit: boolean) {
       : z.string().min(8, 'Haslo musi miec co najmniej 8 znakow'),
     role: z.enum(['ADMIN', 'DEAN_OFFICE', 'INSTRUCTOR', 'STUDENT']),
     instructorId: z.string().optional(),
+    facultyId: z.string().optional(),
     studentGroupIds: z.array(z.string()),
   });
 }
@@ -82,6 +84,7 @@ const EMPTY: UserValues = {
   password: '',
   role: 'STUDENT',
   instructorId: NO_INSTRUCTOR,
+  facultyId: '',
   studentGroupIds: [],
 };
 
@@ -114,6 +117,7 @@ export default function UsersPage() {
   const { data: users, isPending } = useQuery({ queryKey: ['users'], queryFn: fetchUsers });
   const { data: instructors } = useQuery({ queryKey: ['instructors'], queryFn: fetchInstructors });
   const { data: groups } = useQuery({ queryKey: ['groups', 'all'], queryFn: () => fetchGroups({}) });
+  const { data: faculties } = useQuery({ queryKey: ['faculties'], queryFn: fetchFaculties });
 
   const visible = useMemo(() => {
     if (roleFilter === 'all') return users;
@@ -143,6 +147,16 @@ export default function UsersPage() {
     [groups],
   );
 
+  const facultyOptions = useMemo(
+    () =>
+      (faculties ?? []).map((faculty) => ({
+        value: faculty.id,
+        label: `${faculty.name} (${faculty.shortName})`,
+        keywords: faculty.shortName,
+      })),
+    [faculties],
+  );
+
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ['users'] });
 
   const saveMutation = useMutation({
@@ -156,6 +170,8 @@ export default function UsersPage() {
           values.role === 'INSTRUCTOR' && values.instructorId !== NO_INSTRUCTOR
             ? values.instructorId
             : null,
+        facultyId:
+          values.role === 'DEAN_OFFICE' && values.facultyId ? values.facultyId : null,
         studentGroupIds: values.role === 'STUDENT' ? values.studentGroupIds : [],
         ...(values.password ? { password: values.password } : {}),
       };
@@ -206,6 +222,7 @@ export default function UsersPage() {
       password: '',
       role: user.role,
       instructorId: user.instructorId ?? NO_INSTRUCTOR,
+      facultyId: user.facultyId ?? '',
       studentGroupIds: user.studentGroups.map((group) => group.id),
     });
     setDialogOpen(true);
@@ -459,6 +476,29 @@ export default function UsersPage() {
                   />
                   <FieldDescription>
                     Bez tego powiazania konto nie zobaczy wlasnego planu zajec.
+                  </FieldDescription>
+                </Field>
+              )}
+
+              {role === 'DEAN_OFFICE' && (
+                <Field>
+                  <FieldLabel htmlFor="facultyId">Wydzial</FieldLabel>
+                  <Controller
+                    control={form.control}
+                    name="facultyId"
+                    render={({ field }) => (
+                      <Combobox
+                        id="facultyId"
+                        options={facultyOptions}
+                        value={field.value ?? ''}
+                        onChange={field.onChange}
+                        placeholder="Wybierz wydzial"
+                        searchPlaceholder="Szukaj wydzialu…"
+                      />
+                    )}
+                  />
+                  <FieldDescription>
+                    Konto dziekanatu widzi i generuje plan tylko dla tego wydzialu.
                   </FieldDescription>
                 </Field>
               )}

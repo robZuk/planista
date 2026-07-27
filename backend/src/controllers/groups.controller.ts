@@ -1,5 +1,5 @@
 import type { Request, Response } from 'express';
-import type { GroupType } from '@prisma/client';
+import type { GroupType, StudyMode } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { isNotFoundError, isUniqueConstraintError, isForeignKeyError } from '../lib/prismaErrors';
 import { generateGroupName } from '../lib/groupNaming';
@@ -7,13 +7,14 @@ import { generateGroupName } from '../lib/groupNaming';
 // GET /api/groups
 export async function getAll(req: Request, res: Response): Promise<void> {
   try {
-    const { fieldOfStudyId, specializationId, studyYear, academicYear } = req.query;
+    const { fieldOfStudyId, specializationId, studyYear, academicYear, studyMode } = req.query;
     const data = await prisma.studentGroup.findMany({
       where: {
         ...(fieldOfStudyId ? { fieldOfStudyId: String(fieldOfStudyId) } : {}),
         ...(specializationId ? { specializationId: String(specializationId) } : {}),
         ...(studyYear ? { studyYear: Number(studyYear) } : {}),
         ...(academicYear ? { academicYear: String(academicYear) } : {}),
+        ...(studyMode ? { studyMode: studyMode as StudyMode } : {}),
       },
       include: {
         subGroups: { include: { subGroups: true } },
@@ -257,10 +258,11 @@ export async function generate(req: Request, res: Response): Promise<void> {
 // POST /api/groups/confirm — zatwierdz i zapisz propozycje
 export async function confirm(req: Request, res: Response): Promise<void> {
   try {
-    const { fieldOfStudyId, specializationId, academicYear, proposal } = req.body as {
+    const { fieldOfStudyId, specializationId, academicYear, studyMode, proposal } = req.body as {
       fieldOfStudyId?: string;
       specializationId?: string;
       academicYear?: string;
+      studyMode?: StudyMode;
       proposal?: Array<{ name: string; type: GroupType; size: number; parentName: string | null; studyYear: number }>;
     };
 
@@ -290,6 +292,7 @@ export async function confirm(req: Request, res: Response): Promise<void> {
             specializationId: specializationId ?? null,
             studyYear: group.studyYear,
             academicYear,
+            studyMode: studyMode ?? 'FULL_TIME',
             parentGroupId: parentId ?? null,
           },
         });
@@ -322,7 +325,7 @@ const allowedParentType: Record<GroupType, GroupType | null> = {
 // POST /api/groups — utworz grupe recznie
 export async function createOne(req: Request, res: Response): Promise<void> {
   try {
-    const { name, type, size, fieldOfStudyId, specializationId, studyYear, academicYear, parentGroupId, preferredRoomId } =
+    const { name, type, size, fieldOfStudyId, specializationId, studyYear, academicYear, studyMode, parentGroupId, preferredRoomId } =
       req.body as {
         name?: string;
         type?: GroupType;
@@ -331,6 +334,7 @@ export async function createOne(req: Request, res: Response): Promise<void> {
         specializationId?: string;
         studyYear?: number;
         academicYear?: string;
+        studyMode?: StudyMode;
         parentGroupId?: string;
         preferredRoomId?: string;
       };
@@ -366,6 +370,10 @@ export async function createOne(req: Request, res: Response): Promise<void> {
         res.status(422).json({ error: 'Grupa nadrzedna musi nalezec do tego samego kierunku, roku studiow i roku akademickiego' });
         return;
       }
+      if (studyMode && parent.studyMode !== studyMode) {
+        res.status(422).json({ error: 'Grupa nadrzedna musi byc w tym samym trybie studiow' });
+        return;
+      }
     }
 
     const data = await prisma.studentGroup.create({
@@ -377,6 +385,7 @@ export async function createOne(req: Request, res: Response): Promise<void> {
         specializationId: specializationId ?? null,
         studyYear,
         academicYear,
+        studyMode: studyMode ?? 'FULL_TIME',
         parentGroupId: parentGroupId ?? null,
         preferredRoomId: preferredRoomId ?? null,
       },

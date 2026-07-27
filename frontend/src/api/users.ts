@@ -8,6 +8,8 @@ export interface UserInput {
   /** Wymagane przy tworzeniu, opcjonalne przy edycji (pusty = bez zmiany). */
   password?: string;
   instructorId?: string | null;
+  /** Wydzial dziekanatu — istotny tylko dla roli DEAN_OFFICE. */
+  facultyId?: string | null;
   studentGroupIds?: string[];
 }
 

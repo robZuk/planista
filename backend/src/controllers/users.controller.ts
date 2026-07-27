@@ -20,6 +20,7 @@ const userSelect = {
   name: true,
   role: true,
   instructorId: true,
+  facultyId: true,
   createdAt: true,
   instructor: { select: { id: true, firstName: true, lastName: true, title: true } },
   studentGroups: { select: { id: true, name: true } },
@@ -44,7 +45,7 @@ export async function getAll(_req: Request, res: Response): Promise<void> {
 // POST /api/users
 export async function create(req: Request, res: Response): Promise<void> {
   try {
-    const { name, email, password, role, instructorId, studentGroupIds } = req.body ?? {};
+    const { name, email, password, role, instructorId, studentGroupIds, facultyId } = req.body ?? {};
 
     if (typeof name !== 'string' || typeof email !== 'string' || typeof password !== 'string' || !role) {
       res.status(400).json({ error: 'Wymagane pola: name, email, password, role' });
@@ -62,6 +63,7 @@ export async function create(req: Request, res: Response): Promise<void> {
         password: bcrypt.hashSync(password, 12),
         role,
         instructorId: role === 'INSTRUCTOR' ? (instructorId || null) : null,
+        facultyId: role === 'DEAN_OFFICE' ? (facultyId || null) : null,
         ...(role === 'STUDENT' && Array.isArray(studentGroupIds)
           ? { studentGroups: { connect: studentGroupIds.map((id: string) => ({ id })) } }
           : {}),
@@ -82,7 +84,7 @@ export async function create(req: Request, res: Response): Promise<void> {
 // PUT /api/users/:id
 export async function update(req: Request, res: Response): Promise<void> {
   try {
-    const { name, email, role, instructorId, studentGroupIds, password } = req.body ?? {};
+    const { name, email, role, instructorId, studentGroupIds, password, facultyId } = req.body ?? {};
 
     if (role && !VALID_ROLES.includes(role)) {
       res.status(400).json({ error: `Nieprawidlowa rola. Dozwolone: ${VALID_ROLES.join(', ')}` });
@@ -98,6 +100,7 @@ export async function update(req: Request, res: Response): Promise<void> {
         ...(email ? { email } : {}),
         ...(role ? { role } : {}),
         ...(instructorId !== undefined ? { instructorId: instructorId || null } : {}),
+        ...(facultyId !== undefined ? { facultyId: facultyId || null } : {}),
         ...(studentGroupIds !== undefined
           ? { studentGroups: { set: (studentGroupIds as string[]).map((id) => ({ id })) } }
           : {}),

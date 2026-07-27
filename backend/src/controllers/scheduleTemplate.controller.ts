@@ -4,6 +4,7 @@ import { prisma } from '../lib/prisma';
 import { isNotFoundError } from '../lib/prismaErrors';
 import { validateTemplate, isBadRequestError, type TemplateValidationDto } from '../services/scheduleValidation';
 import { getCallerInstructorId } from '../lib/callerInstructor';
+import { getCallerFacultyId } from '../lib/callerFaculty';
 
 const templateInclude = {
   curriculumEntry: { include: { subject: { select: { id: true, name: true } } } },
@@ -17,18 +18,34 @@ const templateInclude = {
 export async function getAll(req: Request, res: Response): Promise<void> {
   try {
     const { semester, academicYear, studyMode, studentGroupId, fieldOfStudyId, specializationId } = req.query;
+
+    // Dziekanat widzi tylko wlasny wydzial — nadpisujemy ewentualny parametr z zapytania.
+    const facultyId =
+      req.user!.role === 'DEAN_OFFICE'
+        ? await getCallerFacultyId(req.user!.id)
+        : req.query.facultyId
+          ? String(req.query.facultyId)
+          : undefined;
+
+    // Filtry siegajace w glab siatki (specjalnosc / kierunek / wydzial) trafiaja pod ten sam
+    // klucz `curriculumEntry`, wiec skladamy je przez AND — inaczej nadpisywalyby sie nawzajem.
+    const curriculumFilters = [];
+    if (specializationId) {
+      curriculumFilters.push({ curriculumEntry: { curriculumVersion: { specializationId: String(specializationId) } } });
+    } else if (fieldOfStudyId) {
+      curriculumFilters.push({ curriculumEntry: { curriculumVersion: { specialization: { fieldOfStudyId: String(fieldOfStudyId) } } } });
+    }
+    if (facultyId) {
+      curriculumFilters.push({ curriculumEntry: { curriculumVersion: { specialization: { fieldOfStudy: { facultyId } } } } });
+    }
+
     const data = await prisma.scheduleTemplate.findMany({
       where: {
         ...(semester ? { semester: Number(semester) } : {}),
         ...(academicYear ? { academicYear: String(academicYear) } : {}),
         ...(studyMode ? { studyMode: studyMode as StudyMode } : {}),
         ...(studentGroupId ? { studentGroupId: String(studentGroupId) } : {}),
-        ...(specializationId
-          ? { curriculumEntry: { curriculumVersion: { specializationId: String(specializationId) } } }
-          : {}),
-        ...(fieldOfStudyId && !specializationId
-          ? { curriculumEntry: { curriculumVersion: { specialization: { fieldOfStudyId: String(fieldOfStudyId) } } } }
-          : {}),
+        ...(curriculumFilters.length > 0 ? { AND: curriculumFilters } : {}),
       },
       include: templateInclude,
       orderBy: [{ dayOfWeek: 'asc' }, { startBlock: { order: 'asc' } }],

@@ -1,10 +1,11 @@
 import { useEffect, useMemo } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Controller, useForm } from 'react-hook-form';
+import { Controller, useFieldArray, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { Trash2 } from 'lucide-react';
+import { Info, Plus, X } from 'lucide-react';
 import { toast } from 'sonner';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -24,7 +25,7 @@ import {
 } from '@/components/ui/select';
 import { Spinner } from '@/components/ui/spinner';
 import { Combobox } from '@/components/Combobox';
-import { createTemplate, deleteTemplate, updateTemplate, type TemplateInput } from '@/api/schedule';
+import { createEntry, type CreateEntryInput } from '@/api/schedule';
 import { fetchBuildings } from '@/api/buildings';
 import { fetchInstructors } from '@/api/instructors';
 import { fetchTimeBlocks } from '@/api/timeBlocks';
@@ -33,59 +34,56 @@ import {
   CLASS_FULL_LABELS,
   CLASS_TYPES,
   ROOM_TYPES_FOR_CLASS,
-  WEEK_TYPE_LABELS,
-  daysForMode,
+  STATUS_LABELS,
   requiredHours,
 } from '@/lib/scheduleDisplay';
-import type {
-  ClassType,
-  CurriculumEntry,
-  DayOfWeek,
-  ScheduleTemplate,
-  StudentGroup,
-  StudyMode,
-  WeekType,
-} from '@/types';
+import type { ClassType, CurriculumEntry, EntryStatus, StudentGroup, StudyMode } from '@/types';
 
 const MAX_BLOCKS = 4;
 
-const templateSchema = z.object({
+const entrySchema = z.object({
   curriculumEntryId: z.string().min(1, 'Wybierz przedmiot z siatki'),
   classType: z.enum(CLASS_TYPES as [ClassType, ...ClassType[]]),
   instructorId: z.string().min(1, 'Wybierz prowadzacego'),
   roomId: z.string().min(1, 'Wybierz sale'),
   studentGroupId: z.string().min(1, 'Wybierz grupe'),
-  dayOfWeek: z.string().min(1, 'Wybierz dzien'),
-  startBlockId: z.string().min(1, 'Wybierz godzine rozpoczecia'),
   blockCount: z.number().int().min(1).max(MAX_BLOCKS),
-  weekType: z.enum(['EVERY', 'EVEN', 'ODD']),
+  status: z.enum(['SCHEDULED', 'CANCELLED', 'MAKEUP']),
+  // Lista terminow: pierwszy jest wymagany, kolejne to opcjonalne dodatkowe daty.
+  slots: z
+    .array(
+      z.object({
+        date: z.string().min(1, 'Wybierz date'),
+        startBlockId: z.string().min(1, 'Wybierz godzine'),
+      }),
+    )
+    .min(1, 'Dodaj przynajmniej jeden termin'),
 });
 
-type TemplateValues = z.infer<typeof templateSchema>;
+type EntryValues = z.infer<typeof entrySchema>;
 
 interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  academicYear: string;
-  semester: number;
   studyMode: StudyMode;
   curriculumEntries: CurriculumEntry[];
   groups: StudentGroup[];
-  /** Wypelnienie z klikniecia w pusta komorke siatki. */
-  prefill?: { dayOfWeek: DayOfWeek; startBlockId: string } | null;
-  editing?: ScheduleTemplate | null;
+  /** Wypelnienie z klikniecia w pusta komorke kalendarza (albo domyslna data widoku). */
+  prefill?: { date: string; startBlockId?: string } | null;
 }
 
-export function TemplateDialog({
+/**
+ * Reczne dodanie terminow wprost do kalendarza (bez wzorca, templateId=null). Mozna dodac jedna
+ * date albo kilka naraz — kazda pozycja z listy tworzy osobny termin o tych samych parametrach.
+ * Przydatne np. do wpisania odrobienia zajec albo pojedynczych zajec spoza serii.
+ */
+export function EntryCreateDialog({
   open,
   onOpenChange,
-  academicYear,
-  semester,
   studyMode,
   curriculumEntries,
   groups,
   prefill,
-  editing,
 }: Props) {
   const queryClient = useQueryClient();
 
@@ -101,58 +99,42 @@ export function TemplateDialog({
     [buildings],
   );
 
-  const form = useForm<TemplateValues>({
-    resolver: zodResolver(templateSchema),
+  const form = useForm<EntryValues>({
+    resolver: zodResolver(entrySchema),
     defaultValues: {
       curriculumEntryId: '',
       classType: 'LECTURE',
       instructorId: '',
       roomId: '',
       studentGroupId: '',
-      dayOfWeek: 'MONDAY',
-      startBlockId: '',
       blockCount: 1,
-      weekType: 'EVERY',
+      status: 'SCHEDULED',
+      slots: [{ date: '', startBlockId: '' }],
     },
   });
 
-  // Formularz zyje tak dlugo jak dialog, wiec przy kazdym otwarciu ustawiamy go od nowa:
-  // albo z edytowanego wzorca, albo z komorki, w ktora kliknieto.
+  const { fields, append, remove } = useFieldArray({ control: form.control, name: 'slots' });
+
+  // Formularz zyje tak dlugo jak dialog — przy kazdym otwarciu ustawiamy go od nowa.
   useEffect(() => {
     if (!open) return;
-    if (editing) {
-      form.reset({
-        curriculumEntryId: editing.curriculumEntryId,
-        classType: editing.classType,
-        instructorId: editing.instructor.id,
-        roomId: editing.room.id,
-        studentGroupId: editing.studentGroup?.id ?? '',
-        dayOfWeek: editing.dayOfWeek,
-        startBlockId: editing.startBlock.id,
-        blockCount: editing.endBlock.order - editing.startBlock.order + 1,
-        weekType: editing.weekType,
-      });
-    } else {
-      form.reset({
-        curriculumEntryId: '',
-        classType: 'LECTURE',
-        instructorId: '',
-        roomId: '',
-        studentGroupId: '',
-        dayOfWeek: prefill?.dayOfWeek ?? daysForMode(studyMode)[0]!.key,
-        startBlockId: prefill?.startBlockId ?? '',
-        blockCount: 1,
-        weekType: 'EVERY',
-      });
-    }
-  }, [open, editing, prefill, studyMode, form]);
+    form.reset({
+      curriculumEntryId: '',
+      classType: 'LECTURE',
+      instructorId: '',
+      roomId: '',
+      studentGroupId: '',
+      blockCount: 1,
+      status: 'SCHEDULED',
+      slots: [{ date: prefill?.date ?? '', startBlockId: prefill?.startBlockId ?? '' }],
+    });
+  }, [open, prefill, form]);
 
   const selectedEntryId = form.watch('curriculumEntryId');
   const selectedClassType = form.watch('classType');
   const selectedEntry = curriculumEntries.find((entry) => entry.id === selectedEntryId);
 
-  // Typy zajec ograniczamy do tych, ktore siatka faktycznie przewiduje dla przedmiotu —
-  // planowanie laboratorium dla przedmiotu bez godzin lab i tak skonczyloby sie bledem.
+  // Typy zajec ograniczamy do tych, ktore siatka faktycznie przewiduje dla przedmiotu.
   const availableClassTypes = selectedEntry
     ? CLASS_TYPES.filter((type) => requiredHours(selectedEntry, type) > 0)
     : CLASS_TYPES;
@@ -162,64 +144,80 @@ export function TemplateDialog({
   const availableRooms = rooms.filter((room) => allowedRoomTypes.includes(room.type));
 
   const saveMutation = useMutation({
-    mutationFn: (values: TemplateValues) => {
-      const startBlock = blocks?.find((block) => block.id === values.startBlockId);
-      const endBlock = blocks?.find(
-        (block) => block.order === (startBlock?.order ?? 0) + values.blockCount - 1,
+    mutationFn: async (values: EntryValues) => {
+      // Kazda pozycja listy to osobny termin — tworzymy je niezaleznie, zeby konflikt na jednej
+      // dacie nie przekreslal pozostalych. Zbieramy wynik i raportujemy zbiorczo.
+      const results = await Promise.allSettled(
+        values.slots.map((slot) => {
+          const startBlock = blocks?.find((block) => block.id === slot.startBlockId);
+          const endBlock = blocks?.find(
+            (block) => block.order === (startBlock?.order ?? 0) + values.blockCount - 1,
+          );
+          if (!startBlock || !endBlock) {
+            return Promise.reject(new Error('Zajecia nie zmieszcza sie do konca dnia'));
+          }
+          const input: CreateEntryInput = {
+            date: slot.date,
+            classType: values.classType,
+            roomId: values.roomId,
+            instructorId: values.instructorId,
+            studentGroupId: values.studentGroupId,
+            curriculumEntryId: values.curriculumEntryId,
+            startBlockId: startBlock.id,
+            endBlockId: endBlock.id,
+            status: values.status,
+          };
+          return createEntry(input);
+        }),
       );
-      if (!startBlock || !endBlock) throw new Error('Nieprawidlowy zakres blokow');
-
-      const input: TemplateInput = {
-        curriculumEntryId: values.curriculumEntryId,
-        classType: values.classType,
-        roomId: values.roomId,
-        instructorId: values.instructorId,
-        studentGroupId: values.studentGroupId,
-        dayOfWeek: values.dayOfWeek as DayOfWeek,
-        startBlockId: startBlock.id,
-        endBlockId: endBlock.id,
-        semester,
-        academicYear,
-        weekType: values.weekType as WeekType,
-        studyMode,
-      };
-      return editing ? updateTemplate(editing.id, input) : createTemplate(input);
+      const created = results.filter((r) => r.status === 'fulfilled').length;
+      const firstError = results.find((r) => r.status === 'rejected') as
+        | PromiseRejectedResult
+        | undefined;
+      return { created, failed: results.length - created, firstError };
     },
-    onSuccess: () => {
-      toast.success(editing ? 'Wzorzec zaktualizowany' : 'Wzorzec dodany');
-      void queryClient.invalidateQueries({ queryKey: ['templates'] });
-      void queryClient.invalidateQueries({ queryKey: ['coverage'] });
-      onOpenChange(false);
+    onSuccess: ({ created, failed, firstError }) => {
+      if (created > 0) {
+        void queryClient.invalidateQueries({ queryKey: ['schedule-entries'] });
+        void queryClient.invalidateQueries({ queryKey: ['coverage'] });
+      }
+      if (failed === 0) {
+        toast.success(created === 1 ? 'Termin dodany' : `Dodano ${created} terminow`);
+        onOpenChange(false);
+      } else if (created > 0) {
+        // Czesc dat sie nie udala (np. konflikt) — zostawiamy okno otwarte, by poprawic reszte.
+        toast.warning(`Dodano ${created}, nie powstalo ${failed} (np. konflikt terminu)`);
+      } else {
+        toast.error(getScheduleErrorMessage(firstError?.reason));
+      }
     },
     onError: (error) => toast.error(getScheduleErrorMessage(error)),
   });
-
-  const deleteMutation = useMutation({
-    mutationFn: () => deleteTemplate(editing!.id),
-    onSuccess: () => {
-      toast.success('Wzorzec usuniety wraz z wygenerowanymi terminami');
-      void queryClient.invalidateQueries({ queryKey: ['templates'] });
-      void queryClient.invalidateQueries({ queryKey: ['coverage'] });
-      onOpenChange(false);
-    },
-    onError: (error) => toast.error(getScheduleErrorMessage(error)),
-  });
-
-  const days = daysForMode(studyMode);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle>{editing ? 'Edytuj zajecia' : 'Nowe zajecia we wzorcu'}</DialogTitle>
+          <DialogTitle>Dodaj termin recznie</DialogTitle>
           <DialogDescription>
-            Wzorzec opisuje jeden powtarzalny termin w tygodniu. Konkretne daty powstaja dopiero
-            przy generowaniu semestru.
+            Wpis prosto w kalendarz — bez wzorca tygodnia. Dodaj jedna date albo kilka naraz; ponowne
+            generowanie semestru tych terminow nie ruszy.
           </DialogDescription>
         </DialogHeader>
 
+        {studyMode === 'PART_TIME' && (
+          <Alert>
+            <Info />
+            <AlertTitle>Studia niestacjonarne</AlertTitle>
+            <AlertDescription>
+              Termin przyjmowany tylko w piatek od 15:00 oraz w sobote i niedziele — poza tym oknem
+              backend go odrzuci.
+            </AlertDescription>
+          </Alert>
+        )}
+
         <form
-          id="template-form"
+          id="entry-form"
           onSubmit={form.handleSubmit((values) => saveMutation.mutate(values))}
           noValidate
         >
@@ -278,11 +276,6 @@ export function TemplateDialog({
                     </Select>
                   )}
                 />
-                {selectedEntry && (
-                  <FieldDescription>
-                    Siatka przewiduje {requiredHours(selectedEntry, selectedClassType)} h tej formy.
-                  </FieldDescription>
-                )}
               </Field>
 
               <Field>
@@ -366,57 +359,9 @@ export function TemplateDialog({
               </Field>
             </div>
 
-            <div className="grid gap-4 sm:grid-cols-4">
+            <div className="grid gap-4 sm:grid-cols-2">
               <Field>
-                <FieldLabel htmlFor="dayOfWeek">Dzien</FieldLabel>
-                <Controller
-                  control={form.control}
-                  name="dayOfWeek"
-                  render={({ field }) => (
-                    <Select value={field.value} onValueChange={field.onChange}>
-                      <SelectTrigger id="dayOfWeek">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {days.map((day) => (
-                          <SelectItem key={day.key} value={day.key}>
-                            {day.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  )}
-                />
-              </Field>
-
-              <Field>
-                <FieldLabel htmlFor="startBlockId">Od godziny</FieldLabel>
-                <Controller
-                  control={form.control}
-                  name="startBlockId"
-                  render={({ field }) => (
-                    <Select value={field.value} onValueChange={field.onChange}>
-                      <SelectTrigger
-                        id="startBlockId"
-                        aria-invalid={!!form.formState.errors.startBlockId}
-                      >
-                        <SelectValue placeholder="—" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {blocks?.map((block) => (
-                          <SelectItem key={block.id} value={block.id}>
-                            {block.startTime}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  )}
-                />
-                <FieldError errors={[form.formState.errors.startBlockId]} />
-              </Field>
-
-              <Field>
-                <FieldLabel htmlFor="blockCount">Godzin</FieldLabel>
+                <FieldLabel htmlFor="blockCount">Czas trwania (godzin)</FieldLabel>
                 <Controller
                   control={form.control}
                   name="blockCount"
@@ -441,19 +386,19 @@ export function TemplateDialog({
               </Field>
 
               <Field>
-                <FieldLabel htmlFor="weekType">Powtarzalnosc</FieldLabel>
+                <FieldLabel htmlFor="status">Status</FieldLabel>
                 <Controller
                   control={form.control}
-                  name="weekType"
+                  name="status"
                   render={({ field }) => (
                     <Select value={field.value} onValueChange={field.onChange}>
-                      <SelectTrigger id="weekType">
+                      <SelectTrigger id="status">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        {(Object.keys(WEEK_TYPE_LABELS) as WeekType[]).map((type) => (
-                          <SelectItem key={type} value={type}>
-                            {WEEK_TYPE_LABELS[type]}
+                        {(Object.keys(STATUS_LABELS) as EntryStatus[]).map((status) => (
+                          <SelectItem key={status} value={status}>
+                            {STATUS_LABELS[status]}
                           </SelectItem>
                         ))}
                       </SelectContent>
@@ -462,32 +407,94 @@ export function TemplateDialog({
                 />
               </Field>
             </div>
+
+            {/* Lista terminow: kazda pozycja = osobna data (i godzina). Wspolne dane sa wyzej. */}
+            <Field>
+              <FieldLabel>Terminy</FieldLabel>
+              <div className="space-y-2">
+                {fields.map((row, index) => (
+                  <div key={row.id} className="flex items-end gap-2">
+                    <div className="flex-1">
+                      <Controller
+                        control={form.control}
+                        name={`slots.${index}.date`}
+                        render={({ field }) => (
+                          <input
+                            type="date"
+                            value={field.value}
+                            onChange={field.onChange}
+                            aria-label={`Data terminu ${index + 1}`}
+                            aria-invalid={!!form.formState.errors.slots?.[index]?.date}
+                            className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 aria-invalid:border-destructive"
+                          />
+                        )}
+                      />
+                    </div>
+                    <div className="w-32">
+                      <Controller
+                        control={form.control}
+                        name={`slots.${index}.startBlockId`}
+                        render={({ field }) => (
+                          <Select value={field.value} onValueChange={field.onChange}>
+                            <SelectTrigger
+                              aria-label={`Godzina terminu ${index + 1}`}
+                              aria-invalid={!!form.formState.errors.slots?.[index]?.startBlockId}
+                            >
+                              <SelectValue placeholder="Godzina" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {blocks?.map((block) => (
+                                <SelectItem key={block.id} value={block.id}>
+                                  {block.startTime}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        )}
+                      />
+                    </div>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      aria-label={`Usun termin ${index + 1}`}
+                      disabled={fields.length === 1}
+                      onClick={() => remove(index)}
+                    >
+                      <X />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="w-fit"
+                onClick={() =>
+                  append({
+                    date: '',
+                    // Nowa pozycja przejmuje godzine z pierwszego terminu — zwykle to samo okno.
+                    startBlockId: form.getValues('slots.0.startBlockId') ?? '',
+                  })
+                }
+              >
+                <Plus />
+                Dodaj kolejny termin
+              </Button>
+              <FieldError errors={[form.formState.errors.slots]} />
+            </Field>
           </FieldGroup>
         </form>
 
-        <DialogFooter className="sm:justify-between">
-          {editing ? (
-            <Button
-              variant="outline"
-              className="text-destructive hover:text-destructive"
-              onClick={() => deleteMutation.mutate()}
-              disabled={deleteMutation.isPending}
-            >
-              {deleteMutation.isPending ? <Spinner /> : <Trash2 />}
-              Usun wzorzec
-            </Button>
-          ) : (
-            <span />
-          )}
-          <div className="flex gap-2">
-            <Button variant="outline" onClick={() => onOpenChange(false)}>
-              Anuluj
-            </Button>
-            <Button type="submit" form="template-form" disabled={saveMutation.isPending}>
-              {saveMutation.isPending && <Spinner />}
-              {editing ? 'Zapisz zmiany' : 'Dodaj'}
-            </Button>
-          </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Anuluj
+          </Button>
+          <Button type="submit" form="entry-form" disabled={saveMutation.isPending}>
+            {saveMutation.isPending && <Spinner />}
+            {fields.length > 1 ? `Dodaj ${fields.length} terminy` : 'Dodaj termin'}
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

@@ -11,7 +11,15 @@ const entryInclude = {
   room: { select: { id: true, number: true, type: true, building: { select: { id: true, name: true } } } },
   instructor: { select: { id: true, firstName: true, lastName: true, title: true } },
   studentGroup: { select: { id: true, name: true } },
-  curriculumEntry: { include: { subject: { select: { id: true, name: true } } } },
+  // semester + specjalnosc (przez wersje siatki) — do filtrow w widoku kalendarza.
+  curriculumEntry: {
+    select: {
+      id: true,
+      semester: true,
+      subject: { select: { id: true, name: true } },
+      curriculumVersion: { select: { specializationId: true } },
+    },
+  },
   template: { select: { id: true, dayOfWeek: true, weekType: true, studyMode: true } },
   startBlock: { select: { id: true, order: true, startTime: true, label: true } },
   endBlock: { select: { id: true, order: true, endTime: true, label: true } },
@@ -139,7 +147,12 @@ export async function updateStatus(req: Request, res: Response): Promise<void> {
         return;
       }
     }
-    const data = await prisma.scheduleEntry.update({ where: { id: req.params.id }, data: { status }, include: entryInclude });
+    // Zmiana statusu to decyzja per-termin — odczepiamy go od operacji na calej serii.
+    const data = await prisma.scheduleEntry.update({
+      where: { id: req.params.id },
+      data: { status, detached: true },
+      include: entryInclude,
+    });
     res.json({ data, message: 'Status terminu zaktualizowany' });
   } catch (error) {
     if (isNotFoundError(error)) {
@@ -241,6 +254,11 @@ export async function move(req: Request, res: Response): Promise<void> {
           endBlockId: newEndBlockId,
           roomId: targetRoomId,
           instructorId: targetInstructorId,
+          // Reczne przeniesienie pojedynczego terminu odczepia go od serii. originalDate
+          // zapamietuje pierwotny slot (tylko za pierwszym razem), zeby generator nie odtworzyl
+          // powstalej "luki" jako duplikatu.
+          detached: true,
+          originalDate: existing.originalDate ?? existing.date,
         },
         include: entryInclude,
       });
@@ -277,8 +295,9 @@ export async function move(req: Request, res: Response): Promise<void> {
 
     const fromDate = new Date(existing.date);
     fromDate.setUTCHours(0, 0, 0, 0);
+    // detached: false — recznie poprzestawiane terminy zostaja nietkniete przy przenoszeniu serii.
     const futureEntries = await prisma.scheduleEntry.findMany({
-      where: { templateId: existing.templateId, date: { gte: fromDate }, status: { not: 'CANCELLED' } },
+      where: { templateId: existing.templateId, date: { gte: fromDate }, status: { not: 'CANCELLED' }, detached: false },
       orderBy: { date: 'asc' },
     });
     const futureIds = futureEntries.map((e) => e.id);

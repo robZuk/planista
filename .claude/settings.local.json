@@ -33,7 +33,9 @@
       "Bash(echo EXIT:$?:*)",
       "mcp__ide__getDiagnostics",
       "Bash(echo FRONTEND_EXIT:$?:*)",
-      "Bash(echo FRONTEND:$?:*)"
+      "Bash(echo FRONTEND:$?:*)",
+      "Bash(docker exec *)",
+      "Bash(git check-ignore *)"
     ]
   }
 }

@@ -18,6 +18,8 @@ import { Item, ItemContent, ItemGroup, ItemTitle } from '@/components/ui/item';
 import { Spinner } from '@/components/ui/spinner';
 import { fetchTemplates, generateSemesterEntries, type GenerateResult } from '@/api/schedule';
 import { fetchCalendars } from '@/api/schedule';
+import { fetchFaculties } from '@/api/faculties';
+import { useAuthStore } from '@/store/authStore';
 import { getScheduleErrorMessage } from '@/lib/scheduleErrors';
 import { CLASS_FULL_LABELS } from '@/lib/scheduleDisplay';
 import { SEMESTER_TYPE_LABELS } from '@/lib/semester';
@@ -30,6 +32,8 @@ interface Props {
   academicYear: string;
   semesterType: SemesterType;
   studyMode: StudyMode;
+  /** Kontekst wydzialu z widoku: 'all' = wszystkie. Dla dziekanatu i tak wymuszamy jego wlasny. */
+  facultyId: string;
 }
 
 /**
@@ -43,15 +47,37 @@ export function GenerateDialog({
   academicYear,
   semesterType,
   studyMode,
+  facultyId,
 }: Props) {
   const queryClient = useQueryClient();
+  const me = useAuthStore((s) => s.user);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [result, setResult] = useState<GenerateResult | null>(null);
 
-  const { data: templates, isPending } = useQuery({
-    queryKey: ['templates', 'all', academicYear, studyMode],
-    queryFn: () => fetchTemplates({ academicYear, studyMode }),
+  // Dziekanat generuje wylacznie swoj wydzial; admin/dziekanat generalny — wg filtra widoku.
+  const isDeanOffice = me?.role === 'DEAN_OFFICE';
+  const effectiveFacultyId = isDeanOffice
+    ? (me?.facultyId ?? null)
+    : facultyId === 'all'
+      ? null
+      : facultyId;
+  // Konto dziekanatu bez przypisanego wydzialu — nie ma czego (bezpiecznie) rozpisac.
+  const deanNoFaculty = isDeanOffice && !me?.facultyId;
+
+  const { data: faculties } = useQuery({
+    queryKey: ['faculties'],
+    queryFn: fetchFaculties,
     enabled: open,
+  });
+  const facultyName = effectiveFacultyId
+    ? (faculties?.find((f) => f.id === effectiveFacultyId)?.name ?? null)
+    : null;
+
+  const { data: templates, isPending } = useQuery({
+    queryKey: ['templates', 'all', academicYear, studyMode, effectiveFacultyId ?? 'all'],
+    queryFn: () =>
+      fetchTemplates({ academicYear, studyMode, facultyId: effectiveFacultyId ?? undefined }),
+    enabled: open && !deanNoFaculty,
   });
 
   const { data: calendars } = useQuery({
@@ -80,6 +106,7 @@ export function GenerateDialog({
         academicYear,
         semesterType,
         studyMode,
+        facultyId: effectiveFacultyId ?? undefined,
       }),
     onSuccess: (response) => {
       setResult(response.data);
@@ -112,7 +139,25 @@ export function GenerateDialog({
           </DialogDescription>
         </DialogHeader>
 
-        {result ? (
+        {deanNoFaculty ? (
+          <Alert variant="destructive">
+            <Sparkles />
+            <AlertTitle>Konto bez przypisanego wydzialu</AlertTitle>
+            <AlertDescription>
+              To konto dziekanatu nie ma przypisanego wydzialu — poinformuj administratora.
+              Generowanie jest wylaczone.
+            </AlertDescription>
+          </Alert>
+        ) : (
+          <p className="text-sm">
+            <span className="text-muted-foreground">Generujesz dla: </span>
+            <span className="font-medium">
+              {effectiveFacultyId ? (facultyName ?? '…') : 'Wszystkie wydzialy'}
+            </span>
+          </p>
+        )}
+
+        {deanNoFaculty ? null : result ? (
           <div className="space-y-3">
             <Alert>
               <CalendarCheck />
@@ -210,7 +255,7 @@ export function GenerateDialog({
               </Button>
               <Button
                 onClick={() => generateMutation.mutate()}
-                disabled={selected.size === 0 || generateMutation.isPending}
+                disabled={selected.size === 0 || generateMutation.isPending || deanNoFaculty}
               >
                 {generateMutation.isPending && <Spinner />}
                 Generuj z {selected.size} wzorcow

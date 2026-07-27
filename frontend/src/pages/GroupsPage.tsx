@@ -46,7 +46,7 @@ import {
 import { fetchFieldsOfStudy } from '@/api/fieldsOfStudy';
 import { fetchSpecializations } from '@/api/specializations';
 import { getErrorMessage } from '@/lib/errors';
-import { GROUP_TYPE_LABELS } from '@/lib/labels';
+import { GROUP_TYPE_LABELS, STUDY_MODE_LABELS } from '@/lib/labels';
 import { useAcademicYearStore } from '@/store/academicYearStore';
 import { useFacultyFilterStore } from '@/store/facultyStore';
 import { useAuthStore } from '@/store/authStore';
@@ -220,6 +220,9 @@ export default function GroupsPage() {
         >
           <span className="font-medium">{group.name}</span>
           <Badge variant={TYPE_VARIANT[group.type]}>{GROUP_TYPE_LABELS[group.type]}</Badge>
+          {group.studyMode === 'PART_TIME' && (
+            <Badge variant="outline">{STUDY_MODE_LABELS.PART_TIME}</Badge>
+          )}
           <span className="flex items-center gap-1 text-sm text-muted-foreground tabular-nums">
             <Users className="size-3.5" />
             {group.size}

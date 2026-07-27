@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CalendarClock, MapPin, Trash2, User, Users } from 'lucide-react';
+import { CalendarClock, MapPin, Pin, Trash2, User, Users } from 'lucide-react';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -137,7 +137,19 @@ export function EntryDialog({ entry, onOpenChange, canEdit }: Props) {
               <Badge variant={entry.status === 'CANCELLED' ? 'outline' : 'secondary'}>
                 {STATUS_LABELS[entry.status]}
               </Badge>
+              {entry.detached && (
+                <Badge variant="outline" className="gap-1">
+                  <Pin className="size-3" />
+                  Odczepiony
+                </Badge>
+              )}
             </div>
+            {entry.detached && (
+              <p className="text-xs text-muted-foreground">
+                Ten termin był ręcznie zmieniany — przenoszenie całej serii go pomija, a ponowne
+                generowanie go nie odtworzy.
+              </p>
+            )}
           </div>
 
           {canEdit && (

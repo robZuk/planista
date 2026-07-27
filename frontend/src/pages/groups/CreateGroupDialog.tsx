@@ -27,8 +27,8 @@ import { createGroup } from '@/api/groups';
 import { fetchFieldsOfStudy } from '@/api/fieldsOfStudy';
 import { fetchSpecializations } from '@/api/specializations';
 import { getErrorMessage } from '@/lib/errors';
-import { GROUP_TYPES, GROUP_TYPE_LABELS } from '@/lib/labels';
-import type { GroupType, StudentGroup } from '@/types';
+import { GROUP_TYPES, GROUP_TYPE_LABELS, STUDY_MODES, STUDY_MODE_LABELS } from '@/lib/labels';
+import type { GroupType, StudentGroup, StudyMode } from '@/types';
 
 const NO_SPECIALIZATION = '__none__';
 
@@ -50,6 +50,7 @@ const createGroupSchema = z
     fieldOfStudyId: z.string().min(1, 'Wybierz kierunek'),
     specializationId: z.string().optional(),
     studyYear: z.number({ message: 'Podaj rok' }).int().min(1, 'Rok od 1').max(6, 'Rok do 6'),
+    studyMode: z.enum(STUDY_MODES as [StudyMode, ...StudyMode[]]),
     size: z.number({ message: 'Podaj liczbe' }).int().min(1, 'Liczebnosc musi byc wieksza od zera'),
     parentGroupId: z.string().optional(),
   })
@@ -89,6 +90,7 @@ export function CreateGroupDialog({ open, onOpenChange, academicYear, groups, on
       fieldOfStudyId: '',
       specializationId: NO_SPECIALIZATION,
       studyYear: 1,
+      studyMode: 'FULL_TIME',
       size: 30,
       parentGroupId: '',
     },
@@ -111,6 +113,7 @@ export function CreateGroupDialog({ open, onOpenChange, academicYear, groups, on
   const selectedType = form.watch('type');
   const selectedField = form.watch('fieldOfStudyId');
   const selectedStudyYear = form.watch('studyYear');
+  const selectedStudyMode = form.watch('studyMode');
 
   const fieldSpecializations =
     specializations?.filter((spec) => spec.fieldOfStudyId === selectedField) ?? [];
@@ -121,7 +124,8 @@ export function CreateGroupDialog({ open, onOpenChange, academicYear, groups, on
       (g) =>
         g.type === expectedParentType &&
         g.fieldOfStudyId === selectedField &&
-        g.studyYear === selectedStudyYear,
+        g.studyYear === selectedStudyYear &&
+        g.studyMode === selectedStudyMode,
     ) ?? [];
 
   const createMutation = useMutation({
@@ -135,6 +139,7 @@ export function CreateGroupDialog({ open, onOpenChange, academicYear, groups, on
           values.specializationId === NO_SPECIALIZATION ? undefined : values.specializationId,
         studyYear: values.studyYear,
         academicYear,
+        studyMode: values.studyMode,
         parentGroupId: expectedParentType === null ? undefined : values.parentGroupId,
       }),
     onSuccess: () => {
@@ -224,6 +229,35 @@ export function CreateGroupDialog({ open, onOpenChange, academicYear, groups, on
                 <FieldError errors={[form.formState.errors.studyYear]} />
               </Field>
             </div>
+
+            <Field>
+              <FieldLabel htmlFor="studyMode">Tryb studiow</FieldLabel>
+              <Controller
+                control={form.control}
+                name="studyMode"
+                render={({ field }) => (
+                  <Select
+                    value={field.value}
+                    onValueChange={(value) => {
+                      field.onChange(value);
+                      // Grupa nadrzedna musi byc w tym samym trybie — stary wybor jest nieaktualny.
+                      form.setValue('parentGroupId', '');
+                    }}
+                  >
+                    <SelectTrigger id="studyMode">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {STUDY_MODES.map((mode) => (
+                        <SelectItem key={mode} value={mode}>
+                          {STUDY_MODE_LABELS[mode]}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+              />
+            </Field>
 
             <div className="grid gap-4 sm:grid-cols-2">
               <Field>

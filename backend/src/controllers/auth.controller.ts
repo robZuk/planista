@@ -31,6 +31,7 @@ function toPublicUser(user: NonNullable<UserWithRelations>) {
     name: user.name,
     role: user.role,
     instructorId: user.instructorId,
+    facultyId: user.facultyId,
     studentGroups: user.studentGroups, // [{ id, name }]
   };
 }

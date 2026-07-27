@@ -53,7 +53,8 @@ export function TimeBlockColumn({ blocks }: { blocks: TimeBlock[] }) {
  *
  * `availability` — podpowiedz wizualna podczas przeciagania (patrz lib/scheduleConflicts.ts):
  * 'available' podswietla komorke na zielono, 'unavailable' na czerwono. `undefined`, gdy
- * nic sie akurat nie przeciaga — wtedy komorka wyglada jak zawsze.
+ * nic sie akurat nie przeciaga — wtedy komorka wyglada jak zawsze. To lekki odcien na KAZDEJ
+ * komorce-kandydacie na poczatek zajec; konkretny cel pod kursorem znaczy `DropPreview`.
  */
 export function DroppableCell({
   id,
@@ -79,8 +80,43 @@ export function DroppableCell({
         'border-t border-border/60 first:border-transparent transition-colors',
         disabled ? 'cursor-not-allowed' : 'cursor-pointer hover:bg-muted/60',
         !availability && isOver && !disabled && 'bg-accent',
-        availability === 'available' && (isOver ? 'bg-green-500/25' : 'bg-green-500/10'),
-        availability === 'unavailable' && (isOver ? 'bg-red-500/25' : 'bg-red-500/10'),
+        availability === 'available' && 'bg-green-500/10',
+        availability === 'unavailable' && 'bg-red-500/10',
+      )}
+    />
+  );
+}
+
+/**
+ * Ramka podgladu upuszczenia — pokazuje DOKLADNIE, gdzie i na ILU blokach wyladuja zajecia
+ * pod kursorem. Wysokosc = pelna dlugosc zajec (`blockCount`), wiec przy zajeciach podwojnych
+ * podpowiedz obejmuje oba pola, a nie jedno. Zielona, gdy termin wolny; czerwona przy konflikcie.
+ * `pointer-events-none` — nie przechwytuje zdarzen dnd, lezy tylko na wierzchu.
+ */
+export function DropPreview({
+  startRowIndex,
+  blockCount,
+  available,
+}: {
+  startRowIndex: number;
+  blockCount: number;
+  available: boolean;
+}) {
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        top: startRowIndex * ROW_HEIGHT + 1,
+        height: blockCount * ROW_HEIGHT - 2,
+        left: 3,
+        right: 3,
+        zIndex: 20,
+      }}
+      className={cn(
+        'pointer-events-none rounded-md border-2 border-dashed',
+        available
+          ? 'border-green-500 bg-green-500/20'
+          : 'border-red-500 bg-red-500/20',
       )}
     />
   );

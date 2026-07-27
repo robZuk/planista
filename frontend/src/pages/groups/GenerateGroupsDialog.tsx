@@ -123,6 +123,7 @@ export function GenerateGroupsDialog({ open, onOpenChange, academicYear, onSaved
         specializationId:
           values.specializationId === NO_SPECIALIZATION ? undefined : values.specializationId,
         academicYear,
+        studyMode: values.studyMode,
         proposal: result!.proposal,
       });
     },

@@ -1,6 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { DndContext, closestCenter, type DragEndEvent, type DragStartEvent } from '@dnd-kit/core';
+import {
+  DndContext,
+  closestCenter,
+  type DragEndEvent,
+  type DragOverEvent,
+  type DragStartEvent,
+} from '@dnd-kit/core';
 import { CalendarDays, Info, Plus } from 'lucide-react';
 import { toast } from 'sonner';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -20,6 +26,7 @@ import { FieldOfStudySelector } from '@/components/FieldOfStudySelector';
 import {
   ColumnHeader,
   DraggableBlock,
+  DropPreview,
   DroppableCell,
   ROW_HEIGHT,
   TimeBlockColumn,
@@ -34,7 +41,9 @@ import { fetchTimeBlocks } from '@/api/timeBlocks';
 import { getScheduleErrorMessage } from '@/lib/scheduleErrors';
 import {
   CLASS_COLORS,
+  CLASS_FULL_LABELS,
   CLASS_LABELS,
+  CLASS_TYPES,
   WEEK_TYPE_BADGE,
   daysForMode,
 } from '@/lib/scheduleDisplay';
@@ -51,7 +60,6 @@ import { useAcademicYearStore } from '@/store/academicYearStore';
 import { useFacultyFilterStore } from '@/store/facultyStore';
 import { useFieldFilterStore } from '@/store/fieldFilterStore';
 import { useAuthStore } from '@/store/authStore';
-import { CoverageCard } from './CoverageCard';
 import { TemplateDialog } from './TemplateDialog';
 import type { DayOfWeek, ScheduleTemplate, StudyMode } from '@/types';
 
@@ -75,8 +83,10 @@ export default function TemplateTab() {
   const [editing, setEditing] = useState<ScheduleTemplate | null>(null);
   const [prefill, setPrefill] = useState<{ dayOfWeek: DayOfWeek; startBlockId: string } | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [overId, setOverId] = useState<string | null>(null);
   const [roomFilter, setRoomFilter] = useState('all');
   const [instructorFilter, setInstructorFilter] = useState('all');
+  const [classTypeFilter, setClassTypeFilter] = useState('all');
 
   const { data: versions } = useQuery({
     queryKey: ['curriculum-versions'],
@@ -194,12 +204,24 @@ export default function TemplateTab() {
       ? (curriculum?.semesters.find((item) => item.semester === semester)?.entries ?? [])
       : [];
 
-  // Grupy z rocznika, do ktorego nalezy semestr: semestry 1-2 to rok 1, 3-4 to rok 2 itd.
+  // Grupy zawezone do kontekstu wzorca: kierunek + rocznik semestru (1-2 = rok 1, 3-4 = rok 2…),
+  // tryb studiow oraz wybrana specjalnosc. Grupy bez podzialu na specjalnosc (specializationId =
+  // null) obsluguja caly kierunek, wiec je zostawiamy.
   const studyYear = typeof semester === 'number' ? Math.ceil(semester / 2) : null;
-  const relevantGroups = useMemo(
-    () => groups?.filter((group) => group.studyYear === studyYear) ?? [],
-    [groups, studyYear],
-  );
+  const relevantGroups = useMemo(() => {
+    if (studyYear === null || !version) return [];
+    const fieldOfStudyId = version.specialization?.fieldOfStudyId ?? null;
+    return (
+      groups?.filter(
+        (group) =>
+          group.studyYear === studyYear &&
+          group.studyMode === studyMode &&
+          group.fieldOfStudyId === fieldOfStudyId &&
+          (group.specializationId === null ||
+            group.specializationId === version.specializationId),
+      ) ?? []
+    );
+  }, [groups, studyYear, version, studyMode]);
 
   const days = daysForMode(studyMode);
 
@@ -210,9 +232,10 @@ export default function TemplateTab() {
       templates?.filter(
         (template) =>
           (roomFilter === 'all' || template.room.id === roomFilter) &&
-          (instructorFilter === 'all' || template.instructor.id === instructorFilter),
+          (instructorFilter === 'all' || template.instructor.id === instructorFilter) &&
+          (classTypeFilter === 'all' || template.classType === classTypeFilter),
       ) ?? [],
-    [templates, roomFilter, instructorFilter],
+    [templates, roomFilter, instructorFilter, classTypeFilter],
   );
 
   const activeTemplate = templates?.find((item) => item.id === activeId) ?? null;
@@ -276,11 +299,31 @@ export default function TemplateTab() {
     onError: (error) => toast.error(getScheduleErrorMessage(error)),
   });
 
+  // Ramka podgladu pod kursorem: gdzie (dzien + wiersz) i na ilu blokach wyladuja zajecia.
+  // blockCount = pelna dlugosc zajec, wiec przy zajeciach podwojnych podpowiedz obejmuje oba
+  // pola, nie jedno. Przycinamy do konca dnia, zeby ramka nie wychodzila poza siatke.
+  const dropPreview = useMemo(() => {
+    if (!overId || !activeTemplate || !blocks) return null;
+    const [dayKey, blockId] = overId.split('::');
+    const startIndex = blocks.findIndex((b) => b.id === blockId);
+    if (!dayKey || startIndex === -1) return null;
+    const span = activeTemplate.endBlock.order - activeTemplate.startBlock.order;
+    const blockCount = Math.min(span + 1, blocks.length - startIndex);
+    const available = !!cellAvailability?.get(overId);
+    return { dayKey, startIndex, blockCount, available };
+  }, [overId, activeTemplate, blocks, cellAvailability]);
+
   const onDragStart = (event: DragStartEvent) => setActiveId(String(event.active.id));
-  const onDragCancel = () => setActiveId(null);
+  const onDragOver = (event: DragOverEvent) =>
+    setOverId(event.over ? String(event.over.id) : null);
+  const onDragCancel = () => {
+    setActiveId(null);
+    setOverId(null);
+  };
 
   const onDragEnd = (event: DragEndEvent) => {
     setActiveId(null);
+    setOverId(null);
     const { active, over } = event;
     if (!over || !blocks) return;
 
@@ -433,6 +476,20 @@ export default function TemplateTab() {
             ))}
           </SelectContent>
         </Select>
+
+        <Select value={classTypeFilter} onValueChange={setClassTypeFilter}>
+          <SelectTrigger className="w-56" aria-label="Forma zajec">
+            <SelectValue placeholder="Forma zajec" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Wszystkie formy</SelectItem>
+            {CLASS_TYPES.map((type) => (
+              <SelectItem key={type} value={type}>
+                {CLASS_FULL_LABELS[type]}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
 
       {(!version && !allSpecializations) || semester === null ? (
@@ -450,11 +507,6 @@ export default function TemplateTab() {
         </Empty>
       ) : (
         <>
-          {/* Pokrycie godzin liczymy dla jednej siatki + jednego semestru — nie dla widoku zbiorczego. */}
-          {!allSpecializations && typeof semester === 'number' && (
-            <CoverageCard curriculumVersionId={versionId} semester={semester} />
-          )}
-
           {studyMode === 'PART_TIME' && (
             <Alert>
               <Info />
@@ -470,6 +522,7 @@ export default function TemplateTab() {
             sensors={sensors}
             collisionDetection={closestCenter}
             onDragStart={onDragStart}
+            onDragOver={onDragOver}
             onDragCancel={onDragCancel}
             onDragEnd={onDragEnd}
           >
@@ -505,6 +558,14 @@ export default function TemplateTab() {
                             onClick={canEdit ? () => openCreate(day.key, block.id) : undefined}
                           />
                         ))}
+
+                        {dropPreview?.dayKey === day.key && (
+                          <DropPreview
+                            startRowIndex={dropPreview.startIndex}
+                            blockCount={dropPreview.blockCount}
+                            available={dropPreview.available}
+                          />
+                        )}
 
                         {dayTemplates.map((template) => {
                           const startIndex = blocks.findIndex(

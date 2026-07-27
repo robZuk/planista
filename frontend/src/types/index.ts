@@ -11,6 +11,7 @@ export interface User {
   name: string;
   role: Role;
   instructorId: string | null;
+  facultyId: string | null;
   studentGroups: StudentGroupRef[];
 }
 
@@ -21,6 +22,7 @@ export interface UserListItem {
   name: string;
   role: Role;
   instructorId: string | null;
+  facultyId: string | null;
   createdAt: string;
   instructor: { id: string; firstName: string; lastName: string; title: string | null } | null;
   studentGroups: StudentGroupRef[];
@@ -155,6 +157,7 @@ export interface StudentGroup {
   specializationId: string | null;
   studyYear: number;
   academicYear: string;
+  studyMode: StudyMode;
   parentGroupId: string | null;
   preferredRoomId: string | null;
   subGroups?: StudentGroup[];
@@ -210,11 +213,18 @@ export interface ScheduleEntry {
   id: string;
   date: string;
   status: EntryStatus;
+  /** Recznie zmieniony pojedynczy termin — nie idzie za operacjami na calej serii. */
+  detached: boolean;
   classType: ClassType;
   room: RoomRef;
   instructor: InstructorRef & { id: string };
   studentGroup: { id: string; name: string } | null;
-  curriculumEntry: { id: string; subject: { id: string; name: string } };
+  curriculumEntry: {
+    id: string;
+    semester: number;
+    subject: { id: string; name: string };
+    curriculumVersion: { specializationId: string };
+  };
   template: { id: string; dayOfWeek: DayOfWeek; weekType: WeekType; studyMode: StudyMode } | null;
   startBlock: BlockRef;
   endBlock: BlockRef;

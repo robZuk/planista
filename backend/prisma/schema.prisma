@@ -22,6 +22,7 @@ model Faculty {
   buildings     Building[]
   instructors   Instructor[]
   fieldsOfStudy FieldOfStudy[]
+  users         User[]
   createdAt     DateTime       @default(now())
 }
 
@@ -248,6 +249,13 @@ model ScheduleEntry {
   template   ScheduleTemplate? @relation(fields: [templateId], references: [id])
   templateId String? // null dla zajec-odrobien dodanych recznie
 
+  // Recznie zmieniony pojedynczy termin (przeniesienie "tylko ten" / zmiana statusu). Odczepiony
+  // termin nie jest juz ruszany przez operacje na calej serii (przeniesienie scope ALL).
+  detached Boolean @default(false)
+  // Pierwotny slot sprzed pierwszego recznego przeniesienia — zeby generator nie odtworzyl
+  // "luki" po przeniesionym terminie jako duplikatu. null, dopoki termin nie zostal przesuniety.
+  originalDate DateTime?
+
   room   Room   @relation(fields: [roomId], references: [id])
   roomId String
 
@@ -310,6 +318,9 @@ model StudentGroup {
   studyYear    Int // 1-4
   academicYear String // "2024/2025"
 
+  // Tryb studiow — grupy stacjonarne i niestacjonarne to rozne sklady studentow.
+  studyMode StudyMode @default(FULL_TIME)
+
   type GroupType
   size Int
 
@@ -345,6 +356,10 @@ model User {
   // Konto INSTRUCTOR moze byc powiazane z rekordem Instructor (1:1)
   instructor   Instructor? @relation(fields: [instructorId], references: [id])
   instructorId String?     @unique
+
+  // Konto DEAN_OFFICE moze byc przypisane do wydzialu (ogranicza je do wlasnego wydzialu)
+  faculty   Faculty? @relation(fields: [facultyId], references: [id])
+  facultyId String?
 
   // Konto STUDENT moze nalezec do wielu grup (M:N)
   studentGroups StudentGroup[] @relation("StudentGroupMembers")
