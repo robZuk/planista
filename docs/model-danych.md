@@ -33,7 +33,7 @@ Ustawiane raz na cykl, potem stabilne. Prawie wszystkie noszą pole `academicYea
 | `CurriculumVersion` | co rok akademicki | wersjonowane — nowa wersja na rocznik |
 | `CurriculumEntry` | przy układaniu siatki | dzieci wersji |
 | `StudentGroup` | co rok akademicki | patrz §4 |
-| `SemesterCalendar` | raz na semestr | ramy dat |
+| `SemesterCalendar` | raz na semestr | ramy dat; `facultyId = null` → ogólnouczelniany, wydziałowy ma pierwszeństwo |
 | `PublicHoliday` | raz na rok | dane kalendarzowe |
 | `Instructor` | wolno (zatrudnienia/odejścia) | „master data" |
 
@@ -165,6 +165,35 @@ przeprowadzić (godziny W/C/L/P/S, ECTS, zaliczenie). Już **wersjonowana**.
 1. **Wzorzec tygodnia** (`ScheduleTemplate`) — projektowany powtarzalny tydzień (dni × bloki).
 2. **Kalendarz semestru** (`ScheduleEntry`) — konkretne daty, generator rozwija wzorzec
    (pomija święta, respektuje `weekType`). Statusy: SCHEDULED / CANCELLED / MAKEUP.
+
+### Rozdzielenie wzorca i kalendarza — decyzja
+
+Obie warstwy są **rozdzielone**, a jednostką organizacyjną planu jest **wydział**
+(`ScheduleTemplate.facultyId` i `ScheduleEntry.facultyId`, wyprowadzane z siatki po stronie
+serwera i dla wzorca niezmienne).
+
+```
+WZORZEC TYGODNIA (wydział)  ──[GENEROWANIE SEMESTRU]──▶  KALENDARZ (wydział)
+   edycja: lokalna              pełne nadpisanie             edycja: lokalna
+   nie rusza kalendarza          zakresu wydziału            nie rusza wzorca
+```
+
+- **Edycja wzorca nie zmienia kalendarza.** Usunięcie wzorca też go nie kasuje — terminy tracą
+  tylko powiązanie z serią (`templateId` → `NULL`, `ON DELETE SET NULL`).
+- **Edycja kalendarza nie zmienia wzorca.** Dotyczy to również przeniesienia całej serii
+  (`scope: 'ALL'`), które przesuwa wyłącznie przyszłe terminy.
+- **Generowanie semestru nadpisuje kalendarz wydziału w całości** — kasuje wszystkie jego terminy
+  w zakresie dat, łącznie z dodanymi ręcznie (odrobienia), odwołanymi i przeniesionymi, po czym
+  rozpisuje plan od zera. Zawsze dotyczy dokładnie jednego wydziału, także dla admina.
+- **Walidacja** świadomie tego pilnuje: `validateTemplate` porównuje wzorce tylko z wzorcami,
+  `validateEntry` terminy tylko z terminami. Konflikty między warstwami rozstrzyga generator.
+- Sale i prowadzący są **współdzieleni między wydziałami**, więc generator sprawdza kolizje wobec
+  terminów całej uczelni. Kolejność generowania wydziałów ma znaczenie — kto pierwszy, ten zajmuje
+  zasób.
+
+Konsekwencja do zakomunikowania użytkownikom: wszystko, co dziekanat poprawił ręcznie w kalendarzu,
+przepada przy kolejnym generowaniu. Dialog generowania pokazuje przed operacją, ile terminów
+zniknie i ile z nich dodano ręcznie.
 
 ### Sposób układania planu — decyzja: ręcznie + wsparcie
 

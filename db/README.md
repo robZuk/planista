@@ -22,8 +22,13 @@ wgrywa się do dowolnej bazy i sam usuwa to, co w niej zastanie.
 | `User` | 4 |
 | `RefreshToken` | 0 |
 
-`_prisma_migrations` (4 wpisy) jest w zrzucie, więc po wgraniu `prisma migrate status`
-widzi bazę jako aktualną i nie próbuje migrować od zera.
+`_prisma_migrations` jest w zrzucie, więc po wgraniu Prisma nie migruje od zera.
+**Zrzut bywa jednak starszy niż katalog `backend/prisma/migrations/`** — po odtworzeniu
+sprawdź `npx prisma migrate status` i domigruj brakujące:
+
+```bash
+cd backend && npx prisma migrate deploy
+```
 
 ## Czym różni się od stanu bazy roboczej
 
