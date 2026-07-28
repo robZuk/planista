@@ -37,7 +37,6 @@ import { semesterTypeOf } from '@/lib/semester';
 import { fetchGroups } from '@/api/groups';
 import { fetchBuildings } from '@/api/buildings';
 import { fetchInstructors } from '@/api/instructors';
-import { fetchFieldsOfStudy } from '@/api/fieldsOfStudy';
 import { fetchTimeBlocks } from '@/api/timeBlocks';
 import { getScheduleErrorMessage } from '@/lib/scheduleErrors';
 import { CLASS_COLORS, CLASS_FULL_LABELS, CLASS_LABELS, CLASS_TYPES, daysForMode } from '@/lib/scheduleDisplay';
@@ -106,13 +105,17 @@ export default function CalendarTab() {
   const { data: calendars } = useQuery({ queryKey: ['semester-calendars'], queryFn: fetchCalendars });
 
   // Poczatek wybranego semestru: z kalendarza (rok + typ + tryb), awaryjnie wyliczony z roku.
+  // Kalendarz wydzialowy ma pierwszenstwo nad ogolnouczelnianym — jak na backendzie.
   const semesterStart = useMemo(() => {
-    const match = calendars?.find(
+    const matching = calendars?.filter(
       (c) =>
         c.academicYear === academicYear &&
         c.semesterType === semesterType &&
         c.studyMode === studyMode,
     );
+    const match =
+      matching?.find((c) => facultyId !== 'all' && c.facultyId === facultyId) ??
+      matching?.find((c) => c.facultyId === null);
     if (match) return startOfWeek(new Date(match.startDate));
     const firstYear = parseInt(academicYear.split('/')[0] ?? '', 10);
     if (!firstYear) return null;
@@ -122,7 +125,7 @@ export default function CalendarTab() {
         ? new Date(Date.UTC(firstYear, 9, 1))
         : new Date(Date.UTC(firstYear + 1, 1, 17));
     return startOfWeek(fallback);
-  }, [calendars, academicYear, semesterType, studyMode]);
+  }, [calendars, academicYear, semesterType, studyMode, facultyId]);
 
   // Zmiana roku/semestru/trybu ustawia widok na poczatek tego semestru. Reczna nawigacja
   // tygodniami zostaje — efekt odpala sie tylko gdy zmieni sie ktorys z tych filtrow.
@@ -134,9 +137,11 @@ export default function CalendarTab() {
     queryKey: ['time-blocks'],
     queryFn: fetchTimeBlocks,
   });
+  // Wydzial zawezamy po stronie serwera (ScheduleEntry ma wlasny facultyId), wiec
+  // terminy bez grupy studenckiej tez sa poprawnie przypisane.
   const { data: entries, isPending: entriesPending } = useQuery({
-    queryKey: ['schedule-entries', from, to],
-    queryFn: () => fetchEntries({ from, to }),
+    queryKey: ['schedule-entries', from, to, facultyId],
+    queryFn: () => fetchEntries({ from, to, ...(facultyId === 'all' ? {} : { facultyId }) }),
   });
   // Zaznaczony termin liczymy z aktualnych danych, zeby dialog zawsze mial swiezy status.
   const selectedEntry = entries?.find((e) => e.id === selectedEntryId) ?? null;
@@ -151,11 +156,6 @@ export default function CalendarTab() {
   });
   const { data: buildings } = useQuery({ queryKey: ['buildings'], queryFn: fetchBuildings });
   const { data: instructors } = useQuery({ queryKey: ['instructors'], queryFn: fetchInstructors });
-  // Wydzialu nie ma wprost na terminie — mapujemy go przez grupe -> kierunek -> wydzial.
-  const { data: fields } = useQuery({
-    queryKey: ['fields-of-study'],
-    queryFn: () => fetchFieldsOfStudy(),
-  });
   // Siatki (= specjalnosci) — do filtra Specjalnosc, tak samo jak w widoku wzorca tygodnia.
   const { data: versions } = useQuery({
     queryKey: ['curriculum-versions'],
@@ -226,14 +226,6 @@ export default function CalendarTab() {
     [buildings],
   );
 
-  // grupa.id -> wydzial.id (przez fieldOfStudyId grupy i facultyId kierunku).
-  const groupFacultyMap = useMemo(() => {
-    const fieldFaculty = new Map((fields ?? []).map((f) => [f.id, f.facultyId]));
-    return new Map(
-      (groups ?? []).map((g) => [g.id, fieldFaculty.get(g.fieldOfStudyId) ?? null]),
-    );
-  }, [groups, fields]);
-
   // grupa.id -> kierunek.id (fieldOfStudyId).
   const groupFieldMap = useMemo(
     () => new Map((groups ?? []).map((g) => [g.id, g.fieldOfStudyId])),
@@ -287,8 +279,9 @@ export default function CalendarTab() {
     openCreate(date, startBlockId);
   };
 
-  // Niezalezne filtry Sala/Prowadzacy + glowne Wydzial/Kierunek — ograniczaja TYLKO wyswietlane
-  // terminy. Konflikty (podpowiedz przy przeciaganiu) liczymy dalej z pelnych danych tygodnia.
+  // Niezalezne filtry Sala/Prowadzacy + glowny Kierunek — ograniczaja TYLKO wyswietlane
+  // terminy. Wydzial jest juz zawezony po stronie serwera. Konflikty (podpowiedz przy
+  // przeciaganiu) liczymy dalej z pelnych danych tygodnia.
   const visibleEntries = useMemo(
     () =>
       entries?.filter(
@@ -296,9 +289,6 @@ export default function CalendarTab() {
           (roomFilter === 'all' || entry.room.id === roomFilter) &&
           (instructorFilter === 'all' || entry.instructor.id === instructorFilter) &&
           (classTypeFilter === 'all' || entry.classType === classTypeFilter) &&
-          (facultyId === 'all' ||
-            (entry.studentGroup != null &&
-              groupFacultyMap.get(entry.studentGroup.id) === facultyId)) &&
           (fieldOfStudyId === 'all' ||
             (entry.studentGroup != null &&
               groupFieldMap.get(entry.studentGroup.id) === fieldOfStudyId)) &&
@@ -312,9 +302,7 @@ export default function CalendarTab() {
       roomFilter,
       instructorFilter,
       classTypeFilter,
-      facultyId,
       fieldOfStudyId,
-      groupFacultyMap,
       groupFieldMap,
       versionFilter,
       selectedSpecializationId,

@@ -195,6 +195,8 @@ export interface RoomRef {
 export interface ScheduleTemplate {
   id: string;
   curriculumEntryId: string;
+  /** Wydzial wyprowadzany z siatki po stronie serwera — niezmienny. */
+  facultyId: string;
   curriculumEntry: { id: string; subject: { id: string; name: string } };
   classType: ClassType;
   room: RoomRef;
@@ -215,6 +217,8 @@ export interface ScheduleEntry {
   status: EntryStatus;
   /** Recznie zmieniony pojedynczy termin — nie idzie za operacjami na calej serii. */
   detached: boolean;
+  /** Wydzial terminu — takze dla terminow dodanych recznie (template = null). */
+  facultyId: string;
   classType: ClassType;
   room: RoomRef;
   instructor: InstructorRef & { id: string };
@@ -238,7 +242,13 @@ export interface SemesterCalendar {
   startDate: string;
   endDate: string;
   teachingWeeks: number;
+  /** null = kalendarz ogolnouczelniany; wydzialowy ma nad nim pierwszenstwo. */
+  facultyId: string | null;
+  faculty: { id: string; name: string; shortName: string } | null;
 }
+
+/** Skad wziely sie daty semestru uzyte przy generowaniu. */
+export type SemesterRangeSource = 'FACULTY' | 'GLOBAL' | 'DERIVED';
 
 export interface PublicHoliday {
   id: string;

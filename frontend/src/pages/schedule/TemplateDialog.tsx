@@ -213,9 +213,12 @@ export function TemplateDialog({
   const deleteMutation = useMutation({
     mutationFn: () => deleteTemplate(editing!.id),
     onSuccess: () => {
-      toast.success('Wzorzec usuniety wraz z wygenerowanymi terminami');
+      toast.success('Wzorzec usuniety. Kalendarz bez zmian — terminy znikna przy generowaniu.');
       void queryClient.invalidateQueries({ queryKey: ['templates'] });
       void queryClient.invalidateQueries({ queryKey: ['coverage'] });
+      // Terminy zostaja, ale traca powiazanie z seria (templateId -> null),
+      // a to widac w kalendarzu — trzeba je przeladowac.
+      void queryClient.invalidateQueries({ queryKey: ['schedule-entries'] });
       onOpenChange(false);
     },
     onError: (error) => toast.error(getScheduleErrorMessage(error)),
@@ -229,8 +232,8 @@ export function TemplateDialog({
         <DialogHeader>
           <DialogTitle>{editing ? 'Edytuj zajecia' : 'Nowe zajecia we wzorcu'}</DialogTitle>
           <DialogDescription>
-            Wzorzec opisuje jeden powtarzalny termin w tygodniu. Konkretne daty powstaja dopiero
-            przy generowaniu semestru.
+            Wzorzec opisuje jeden powtarzalny termin w tygodniu. Zmiany nie ruszaja istniejacego
+            kalendarza — wchodza do niego dopiero przy generowaniu semestru.
           </DialogDescription>
         </DialogHeader>
 

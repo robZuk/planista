@@ -217,10 +217,14 @@ export function EntryDialog({ entry, onOpenChange, canEdit }: Props) {
                       Tylko ten termin
                     </FieldLabel>
                     <FieldLabel htmlFor="scope-all" className="font-normal">
-                      <RadioGroupItem value="ALL" id="scope-all" />
-                      Ten i wszystkie kolejne z tego wzorca
+                      <RadioGroupItem value="ALL" id="scope-all" disabled={!entry.template} />
+                      Ten i wszystkie kolejne z tej serii
                     </FieldLabel>
                   </RadioGroup>
+                  <FieldDescription>
+                    Obie opcje zmieniaja tylko kalendarz — wzorzec tygodnia zostaje bez zmian,
+                    a przy nastepnym generowaniu semestru plan powstanie od nowa z wzorcow.
+                  </FieldDescription>
                 </Field>
               </FieldGroup>
             </>

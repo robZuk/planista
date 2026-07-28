@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CalendarCheck, Sparkles } from 'lucide-react';
+import { CalendarCheck, Sparkles, TriangleAlert } from 'lucide-react';
 import { toast } from 'sonner';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
@@ -15,9 +15,21 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Item, ItemContent, ItemGroup, ItemTitle } from '@/components/ui/item';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { Spinner } from '@/components/ui/spinner';
-import { fetchTemplates, generateSemesterEntries, type GenerateResult } from '@/api/schedule';
-import { fetchCalendars } from '@/api/schedule';
+import {
+  fetchCalendars,
+  fetchEntries,
+  fetchTemplates,
+  generateSemesterEntries,
+  type GenerateResult,
+} from '@/api/schedule';
 import { fetchFaculties } from '@/api/faculties';
 import { useAuthStore } from '@/store/authStore';
 import { getScheduleErrorMessage } from '@/lib/scheduleErrors';
@@ -38,8 +50,11 @@ interface Props {
 
 /**
  * Generator terminow: bierze wybrane wzorce tygodnia i rozpisuje je na konkretne
- * daty calego semestru. Zakres dat pochodzi z kalendarza semestru (jesli istnieje)
- * albo z domyslnego wyliczenia po stronie backendu.
+ * daty calego semestru.
+ *
+ * Operacja jest DESTRUKCYJNA — nadpisuje kalendarz wybranego wydzialu w calosci,
+ * kasujac takze terminy dodane recznie i przeniesienia. Dlatego zawsze dotyczy
+ * dokladnie jednego wydzialu, takze gdy admin oglada "wszystkie".
  */
 export function GenerateDialog({
   open,
@@ -52,14 +67,17 @@ export function GenerateDialog({
   const queryClient = useQueryClient();
   const me = useAuthStore((s) => s.user);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [pickedFacultyId, setPickedFacultyId] = useState('');
   const [result, setResult] = useState<GenerateResult | null>(null);
 
-  // Dziekanat generuje wylacznie swoj wydzial; admin/dziekanat generalny — wg filtra widoku.
+  // Dziekanat generuje wylacznie swoj wydzial. Admin z filtrem "wszystkie" musi
+  // wskazac jeden — nadpisanie kalendarzy calej uczelni jednym klikiem jest za szerokie.
   const isDeanOffice = me?.role === 'DEAN_OFFICE';
+  const needsPick = !isDeanOffice && facultyId === 'all';
   const effectiveFacultyId = isDeanOffice
     ? (me?.facultyId ?? null)
-    : facultyId === 'all'
-      ? null
+    : needsPick
+      ? pickedFacultyId || null
       : facultyId;
   // Konto dziekanatu bez przypisanego wydzialu — nie ma czego (bezpiecznie) rozpisac.
   const deanNoFaculty = isDeanOffice && !me?.facultyId;
@@ -74,29 +92,46 @@ export function GenerateDialog({
     : null;
 
   const { data: templates, isPending } = useQuery({
-    queryKey: ['templates', 'all', academicYear, studyMode, effectiveFacultyId ?? 'all'],
-    queryFn: () =>
-      fetchTemplates({ academicYear, studyMode, facultyId: effectiveFacultyId ?? undefined }),
-    enabled: open && !deanNoFaculty,
+    queryKey: ['templates', 'all', academicYear, studyMode, effectiveFacultyId ?? 'none'],
+    queryFn: () => fetchTemplates({ academicYear, studyMode, facultyId: effectiveFacultyId! }),
+    enabled: open && !deanNoFaculty && !!effectiveFacultyId,
   });
 
   const { data: calendars } = useQuery({
-    queryKey: ['calendars'],
+    queryKey: ['semester-calendars'],
     queryFn: fetchCalendars,
     enabled: open,
   });
 
-  const calendar = calendars?.find(
+  // Kalendarz wydzialowy ma pierwszenstwo nad ogolnouczelnianym (lustro
+  // resolveSemesterRange z backendu).
+  const matching = calendars?.filter(
     (item) =>
       item.academicYear === academicYear &&
       item.semesterType === semesterType &&
       item.studyMode === studyMode,
   );
+  const calendar =
+    matching?.find((item) => item.facultyId === effectiveFacultyId) ??
+    matching?.find((item) => item.facultyId === null);
+
+  // Ile terminow zniknie. Liczymy dopiero, gdy znamy wydzial i zakres dat.
+  const from = calendar?.startDate.slice(0, 10);
+  const to = calendar?.endDate.slice(0, 10);
+  const { data: doomed } = useQuery({
+    queryKey: ['schedule-entries', 'doomed', from, to, effectiveFacultyId],
+    queryFn: () => fetchEntries({ from, to, facultyId: effectiveFacultyId! }),
+    enabled: open && !!effectiveFacultyId && !!from && !!to && !result,
+  });
+  const doomedManual = doomed?.filter((entry) => entry.template === null).length ?? 0;
 
   // Po otwarciu zaznaczamy wszystko — typowy scenariusz to "rozpisz caly semestr".
   useEffect(() => {
     if (open && templates) setSelected(new Set(templates.map((template) => template.id)));
-    if (!open) setResult(null);
+    if (!open) {
+      setResult(null);
+      setPickedFacultyId('');
+    }
   }, [open, templates]);
 
   const generateMutation = useMutation({
@@ -106,7 +141,7 @@ export function GenerateDialog({
         academicYear,
         semesterType,
         studyMode,
-        facultyId: effectiveFacultyId ?? undefined,
+        facultyId: effectiveFacultyId!,
       }),
     onSuccess: (response) => {
       setResult(response.data);
@@ -127,6 +162,7 @@ export function GenerateDialog({
   };
 
   const allSelected = !!templates && templates.length > 0 && selected.size === templates.length;
+  const canGenerate = selected.size > 0 && !!effectiveFacultyId && !deanNoFaculty;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -148,12 +184,29 @@ export function GenerateDialog({
               Generowanie jest wylaczone.
             </AlertDescription>
           </Alert>
+        ) : needsPick ? (
+          <div className="space-y-1.5">
+            <span className="text-sm text-muted-foreground">Wydzial do rozpisania</span>
+            <Select value={pickedFacultyId} onValueChange={setPickedFacultyId}>
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder="Wybierz wydzial…" />
+              </SelectTrigger>
+              <SelectContent>
+                {faculties?.map((faculty) => (
+                  <SelectItem key={faculty.id} value={faculty.id}>
+                    {faculty.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              Generowanie nadpisuje kalendarz jednego wydzialu, wiec trzeba go wskazac.
+            </p>
+          </div>
         ) : (
           <p className="text-sm">
             <span className="text-muted-foreground">Generujesz dla: </span>
-            <span className="font-medium">
-              {effectiveFacultyId ? (facultyName ?? '…') : 'Wszystkie wydzialy'}
-            </span>
+            <span className="font-medium">{facultyName ?? '…'}</span>
           </p>
         )}
 
@@ -163,24 +216,32 @@ export function GenerateDialog({
               <CalendarCheck />
               <AlertTitle>Gotowe</AlertTitle>
               <AlertDescription>
-                Generator pomija dni wolne, daty poza oknem trybu studiow i terminy, ktore juz
-                istnieja.
+                Kalendarz wydzialu zostal rozpisany od nowa. Generator pomija dni wolne, daty poza
+                oknem trybu studiow i terminy przekraczajace limit godzin z siatki.
               </AlertDescription>
             </Alert>
 
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
               <Stat label="Utworzone" value={result.created} highlight />
-              <Stat label="Juz istnialy" value={result.alreadyExists} />
+              <Stat label="Skasowane" value={result.deleted.total} warn={result.deleted.manual > 0} />
               <Stat label="Pominiete" value={result.skipped} />
               <Stat label="Konflikty" value={result.conflicts} warn={result.conflicts > 0} />
             </div>
+
+            {result.deleted.manual > 0 && (
+              <p className="text-xs text-muted-foreground">
+                Wsrod skasowanych bylo {result.deleted.manual} terminow dodanych recznie
+                (odrobienia, przeniesienia). Trzeba je wprowadzic ponownie.
+              </p>
+            )}
           </div>
         ) : (
           <div className="space-y-3">
             {calendar ? (
               <p className="text-sm text-muted-foreground">
                 Zakres semestru: {formatDateLong(calendar.startDate)} –{' '}
-                {formatDateLong(calendar.endDate)} ({calendar.teachingWeeks} tygodni).
+                {formatDateLong(calendar.endDate)} ({calendar.teachingWeeks} tygodni)
+                {calendar.facultyId ? ' — kalendarz wydzialowy.' : ' — kalendarz ogolnouczelniany.'}
               </p>
             ) : (
               <Alert>
@@ -192,7 +253,23 @@ export function GenerateDialog({
               </Alert>
             )}
 
-            {isPending ? (
+            {effectiveFacultyId && (doomed?.length ?? 0) > 0 && (
+              <Alert variant="destructive">
+                <TriangleAlert />
+                <AlertTitle>Nadpisze caly kalendarz tego wydzialu</AlertTitle>
+                <AlertDescription>
+                  W zakresie semestru zniknie {doomed!.length} istniejacych terminow
+                  {doomedManual > 0 ? `, w tym ${doomedManual} dodanych recznie` : ''}. Reczne
+                  przeniesienia i odwolania nie przetrwaja tej operacji.
+                </AlertDescription>
+              </Alert>
+            )}
+
+            {!effectiveFacultyId ? (
+              <p className="rounded-lg border border-dashed px-4 py-6 text-center text-sm text-muted-foreground">
+                Wskaz wydzial, zeby zobaczyc jego wzorce.
+              </p>
+            ) : isPending ? (
               <p className="text-sm text-muted-foreground">Wczytuje wzorce…</p>
             ) : templates?.length === 0 ? (
               <p className="rounded-lg border border-dashed px-4 py-6 text-center text-sm text-muted-foreground">
@@ -254,11 +331,14 @@ export function GenerateDialog({
                 Anuluj
               </Button>
               <Button
+                variant={(doomed?.length ?? 0) > 0 ? 'destructive' : 'default'}
                 onClick={() => generateMutation.mutate()}
-                disabled={selected.size === 0 || generateMutation.isPending || deanNoFaculty}
+                disabled={!canGenerate || generateMutation.isPending}
               >
                 {generateMutation.isPending && <Spinner />}
-                Generuj z {selected.size} wzorcow
+                {(doomed?.length ?? 0) > 0
+                  ? `Nadpisz z ${selected.size} wzorcow`
+                  : `Generuj z ${selected.size} wzorcow`}
               </Button>
             </>
           )}

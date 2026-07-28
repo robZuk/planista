@@ -10,6 +10,7 @@ import CurriculumVersionPage from '@/pages/curriculum/CurriculumVersionPage';
 import GroupsPage from '@/pages/GroupsPage';
 import SchedulePage from '@/pages/SchedulePage';
 import HolidaysPage from '@/pages/HolidaysPage';
+import SemesterCalendarsPage from '@/pages/SemesterCalendarsPage';
 import DashboardPage from '@/pages/DashboardPage';
 import UsersPage from '@/pages/UsersPage';
 import ProtectedRoute from '@/components/ProtectedRoute';
@@ -23,6 +24,7 @@ const PAGES: Record<string, ComponentType> = {
   '/groups': GroupsPage,
   '/schedule': SchedulePage,
   '/holidays': HolidaysPage,
+  '/semester-calendars': SemesterCalendarsPage,
   '/faculties': FacultiesPage,
   '/buildings': BuildingsPage,
   '/instructors': InstructorsPage,

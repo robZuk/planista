@@ -156,6 +156,7 @@ export default function TemplateTab() {
       academicYear,
       studyMode,
       semester,
+      facultyId,
       allSpecializations ? `field:${fieldOfStudyId}` : version?.specializationId,
     ],
     queryFn: () =>
@@ -163,6 +164,7 @@ export default function TemplateTab() {
         academicYear,
         studyMode,
         ...(semester !== 'all' && semester !== null ? { semester } : {}),
+        ...(facultyId === 'all' ? {} : { facultyId }),
         // Konkretna siatka -> po specjalnosci; "Wszystkie" -> ewentualnie po kierunku (filtr Kierunek).
         ...(allSpecializations
           ? fieldOfStudyId !== 'all'
@@ -187,6 +189,8 @@ export default function TemplateTab() {
 
   // Konflikty (sala/prowadzacy/grupa) sprawdzamy globalnie dla calego roku, bo backend
   // tez tak robi — nie tylko w obrebie aktualnie wybranego semestru/trybu/siatki.
+  // CELOWO bez filtra wydzialu: sale i prowadzacy sa wspoldzieleni miedzy wydzialami,
+  // wiec zawezenie tego zbioru przegapialoby konflikty miedzywydzialowe.
   const { data: allTemplates } = useQuery({
     queryKey: ['templates', 'all', academicYear],
     queryFn: () => fetchTemplates({ academicYear }),
@@ -197,12 +201,17 @@ export default function TemplateTab() {
   // Kalendarz semestru daje `teachingWeeks` — przelicznik godzin semestralnych z siatki
   // na tygodniowe, ktorymi operuje wzorzec. Bez niego backlog dziala w trybie zgrubnym.
   const { data: calendars } = useQuery({ queryKey: ['semester-calendars'], queryFn: fetchCalendars });
+  // Kalendarz wydzialowy ma pierwszenstwo nad ogolnouczelnianym — jak na backendzie.
+  const matchingCalendars = calendars?.filter(
+    (calendar) =>
+      calendar.academicYear === academicYear &&
+      calendar.semesterType === semesterType &&
+      calendar.studyMode === studyMode,
+  );
   const teachingWeeks =
-    calendars?.find(
-      (calendar) =>
-        calendar.academicYear === academicYear &&
-        calendar.semesterType === semesterType &&
-        calendar.studyMode === studyMode,
+    (
+      matchingCalendars?.find((c) => facultyId !== 'all' && c.facultyId === facultyId) ??
+      matchingCalendars?.find((c) => c.facultyId === null)
     )?.teachingWeeks ?? null;
 
   const rooms = useMemo(

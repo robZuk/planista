@@ -7,6 +7,7 @@ import type {
   ScheduleEntry,
   ScheduleTemplate,
   SemesterCalendar,
+  SemesterRangeSource,
   SemesterType,
   StudyMode,
   WeekType,
@@ -82,18 +83,24 @@ export async function fetchCoverageSummary(curriculumVersionId: string): Promise
 // ─── Generator terminow ──────────────────────────────────────
 
 export interface GenerateResult {
+  /** Ile terminow wydzialu skasowalo nadpisanie (`manual` = dodane recznie). */
+  deleted: { total: number; manual: number };
   created: number;
   skipped: number;
-  alreadyExists: number;
   conflicts: number;
+  range: { startDate: string; endDate: string; source: SemesterRangeSource };
 }
 
+/**
+ * Generowanie NADPISUJE kalendarz wydzialu w calosci, dlatego facultyId jest
+ * wymagany — nie ma wariantu "wszystkie wydzialy naraz".
+ */
 export async function generateSemesterEntries(input: {
   templateIds: string[];
   academicYear: string;
   semesterType: SemesterType;
   studyMode: StudyMode;
-  facultyId?: string;
+  facultyId: string;
 }): Promise<{ data: GenerateResult; message: string }> {
   const res = await api.post('/schedule/generate', input);
   return res.data;
@@ -107,6 +114,7 @@ export async function fetchEntries(filters: {
   studentGroupId?: string;
   instructorId?: string;
   status?: EntryStatus;
+  facultyId?: string;
 }): Promise<ScheduleEntry[]> {
   const res = await api.get('/schedule/entries', { params: filters });
   return res.data.data;
@@ -167,6 +175,8 @@ export async function createCalendar(input: {
   studyMode: StudyMode;
   startDate: string;
   endDate: string;
+  /** null = ogolnouczelniany. Dziekanatowi i tak wymuszamy jego wlasny wydzial. */
+  facultyId?: string | null;
 }): Promise<SemesterCalendar> {
   const res = await api.post('/schedule/calendars', input);
   return res.data.data;
