@@ -124,9 +124,11 @@ export async function update(req: Request, res: Response): Promise<void> {
       res.status(404).json({ error: 'Kalendarz nie znaleziony' });
       return;
     }
+    // Uwaga na null: kalendarz ogolnouczelniany tez ma facultyId = null, wiec samo
+    // porownanie przepusciloby konto dziekanatu bez przypisanego wydzialu.
     if (req.user!.role === 'DEAN_OFFICE') {
       const myFacultyId = await getCallerFacultyId(req.user!.id);
-      if (current.facultyId !== myFacultyId) {
+      if (!myFacultyId || current.facultyId !== myFacultyId) {
         res.status(403).json({ error: 'Mozesz edytowac tylko kalendarz swojego wydzialu' });
         return;
       }
@@ -189,7 +191,7 @@ export async function remove(req: Request, res: Response): Promise<void> {
     }
     if (req.user!.role === 'DEAN_OFFICE') {
       const myFacultyId = await getCallerFacultyId(req.user!.id);
-      if (current.facultyId !== myFacultyId) {
+      if (!myFacultyId || current.facultyId !== myFacultyId) {
         res.status(403).json({ error: 'Mozesz usuwac tylko kalendarz swojego wydzialu' });
         return;
       }

@@ -71,7 +71,16 @@ export async function generateSemester(req: Request, res: Response): Promise<voi
 
     const range = await resolveSemesterRange(academicYear, semesterType, studyMode, facultyId);
     const { startDate, endDate } = range;
-    const dateRange = { gte: startDate, lte: endDate };
+
+    // Kalendarz trzyma granice o polnocy, a terminy stoja w poludnie UTC — bez rozciagniecia
+    // do pelnych dob nadpisanie omijaloby zajecia z ostatniego dnia semestru (a generator
+    // i tak by je odtworzyl, bo getDatesForDayOfWeek liczy do konca doby). Efektem byly
+    // narastajace duplikaty.
+    const rangeStart = new Date(startDate);
+    rangeStart.setUTCHours(0, 0, 0, 0);
+    const rangeEnd = new Date(endDate);
+    rangeEnd.setUTCHours(23, 59, 59, 999);
+    const dateRange = { gte: rangeStart, lte: rangeEnd };
 
     const holidays = await prisma.publicHoliday.findMany({ where: { date: dateRange } });
     const holidaySet = new Set(holidays.map((h) => dateToStr(h.date)));
