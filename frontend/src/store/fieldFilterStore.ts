@@ -2,7 +2,8 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
 /**
- * Globalny filtr kierunku (FieldOfStudy) dla widoku Plan zajec. 'all' = brak filtra.
+ * Globalny filtr kierunku (FieldOfStudy) — wspolny dla widokow Plan zajec i Siatka
+ * godzin (zakladka Siatki). 'all' = brak filtra.
  * Kaskaduje od filtra wydzialu ([[facultyStore]]): wybor innego wydzialu, ktory nie
  * zawiera aktualnego kierunku, resetuje ten filtr na 'all' (patrz FieldOfStudySelector).
  */

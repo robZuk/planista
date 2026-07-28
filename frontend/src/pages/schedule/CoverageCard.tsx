@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { CheckCircle2, ChevronDown } from 'lucide-react';
+import { CheckCircle2, ChevronDown, CircleDashed } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
@@ -7,6 +7,7 @@ import { Progress } from '@/components/ui/progress';
 import { Skeleton } from '@/components/ui/skeleton';
 import { fetchCoverageSummary } from '@/api/schedule';
 import { CLASS_FULL_LABELS } from '@/lib/scheduleDisplay';
+import { cn } from '@/lib/utils';
 
 /**
  * Bilans pokrycia: ile godzin z siatki ma juz KONKRETNE terminy w kalendarzu.
@@ -64,12 +65,20 @@ export function CoverageCard({
         {current.subjects.map((subject) => (
           <div
             key={`${subject.subjectName}-${subject.classType}`}
-            className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm"
+            className={cn(
+              // -mx-2 px-2: podswietlenie wychodzi poza tekst, ale sam tekst zostaje w linii
+              // z akapitem powyzej. border-l-2 dostaja wszystkie wiersze, zeby nie przeskakiwaly.
+              '-mx-2 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border-l-2 border-transparent px-2 py-1 text-sm',
+              // Niedomkniete pozycje na bursztynowo — to one zostaly do zaplanowania.
+              // Kolor jest tematyczny (nie destructive: brak godzin to robota do zrobienia,
+              // nie blad), wiec jak CLASS_COLORS omija tokeny shadcn i podaje jawny `dark:`.
+              !subject.completed && 'border-l-amber-500 bg-amber-100/70 dark:bg-amber-950/50',
+            )}
           >
             {subject.completed ? (
               <CheckCircle2 className="size-4 text-primary" />
             ) : (
-              <span className="size-4" />
+              <CircleDashed className="size-4 text-amber-600 dark:text-amber-400" />
             )}
             <span className="font-medium">{subject.subjectName}</span>
             <Badge variant="outline">{CLASS_FULL_LABELS[subject.classType]}</Badge>
@@ -77,7 +86,9 @@ export function CoverageCard({
               {subject.planned} / {subject.required} h
             </span>
             {subject.remaining > 0 && (
-              <span className="text-muted-foreground">— zostalo {subject.remaining} h</span>
+              <span className="font-medium text-amber-700 dark:text-amber-300">
+                — zostalo {subject.remaining} h
+              </span>
             )}
           </div>
         ))}

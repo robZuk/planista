@@ -32,7 +32,7 @@ import {
   TimeBlockColumn,
   useScheduleSensors,
 } from '@/components/schedule/ScheduleGrid';
-import { fetchTemplates, updateTemplate } from '@/api/schedule';
+import { fetchCalendars, fetchTemplates, updateTemplate } from '@/api/schedule';
 import { fetchEntries, fetchVersions } from '@/api/curriculum';
 import { fetchGroups } from '@/api/groups';
 import { fetchBuildings } from '@/api/buildings';
@@ -44,9 +44,11 @@ import {
   CLASS_FULL_LABELS,
   CLASS_LABELS,
   CLASS_TYPES,
+  MAX_TEMPLATE_BLOCKS,
   WEEK_TYPE_BADGE,
   daysForMode,
 } from '@/lib/scheduleDisplay';
+import { computeUnplannedItems, suggestedBlockCount } from '@/lib/unplannedItems';
 import {
   DAY_TO_NUM,
   getGroupFamilyIds,
@@ -60,8 +62,9 @@ import { useAcademicYearStore } from '@/store/academicYearStore';
 import { useFacultyFilterStore } from '@/store/facultyStore';
 import { useFieldFilterStore } from '@/store/fieldFilterStore';
 import { useAuthStore } from '@/store/authStore';
-import { TemplateDialog } from './TemplateDialog';
-import type { DayOfWeek, ScheduleTemplate, StudyMode } from '@/types';
+import { TemplateDialog, type TemplatePrefill } from './TemplateDialog';
+import { UnplannedPanel } from './UnplannedPanel';
+import type { DayOfWeek, ScheduleTemplate, StudyMode, WeekType } from '@/types';
 
 export default function TemplateTab() {
   const queryClient = useQueryClient();
@@ -81,7 +84,7 @@ export default function TemplateTab() {
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<ScheduleTemplate | null>(null);
-  const [prefill, setPrefill] = useState<{ dayOfWeek: DayOfWeek; startBlockId: string } | null>(null);
+  const [prefill, setPrefill] = useState<TemplatePrefill | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [overId, setOverId] = useState<string | null>(null);
   const [roomFilter, setRoomFilter] = useState('all');
@@ -191,6 +194,17 @@ export default function TemplateTab() {
   const { data: buildings } = useQuery({ queryKey: ['buildings'], queryFn: fetchBuildings });
   const { data: instructors } = useQuery({ queryKey: ['instructors'], queryFn: fetchInstructors });
 
+  // Kalendarz semestru daje `teachingWeeks` — przelicznik godzin semestralnych z siatki
+  // na tygodniowe, ktorymi operuje wzorzec. Bez niego backlog dziala w trybie zgrubnym.
+  const { data: calendars } = useQuery({ queryKey: ['semester-calendars'], queryFn: fetchCalendars });
+  const teachingWeeks =
+    calendars?.find(
+      (calendar) =>
+        calendar.academicYear === academicYear &&
+        calendar.semesterType === semesterType &&
+        calendar.studyMode === studyMode,
+    )?.teachingWeeks ?? null;
+
   const rooms = useMemo(
     () =>
       buildings?.flatMap((building) =>
@@ -199,10 +213,15 @@ export default function TemplateTab() {
     [buildings],
   );
 
-  const semesterEntries =
-    typeof semester === 'number'
-      ? (curriculum?.semesters.find((item) => item.semester === semester)?.entries ?? [])
-      : [];
+  // Memo, bo od tej listy zalezy wyliczanie backlogu — nowa tablica przy kazdym
+  // renderze przeliczalaby go bez potrzeby.
+  const semesterEntries = useMemo(
+    () =>
+      typeof semester === 'number'
+        ? (curriculum?.semesters.find((item) => item.semester === semester)?.entries ?? [])
+        : [],
+    [curriculum, semester],
+  );
 
   // Grupy zawezone do kontekstu wzorca: kierunek + rocznik semestru (1-2 = rok 1, 3-4 = rok 2…),
   // tryb studiow oraz wybrana specjalnosc. Grupy bez podzialu na specjalnosc (specializationId =
@@ -223,6 +242,23 @@ export default function TemplateTab() {
     );
   }, [groups, studyYear, version, studyMode]);
 
+  // Backlog liczymy z PELNEJ listy wzorcow semestru — filtry widoku (sala/prowadzacy/forma)
+  // zawezaja tylko to, co widac na siatce, a nie to, co faktycznie jest juz zaplanowane.
+  const { items: unplannedItems, missingGroupTypes } = useMemo(
+    () =>
+      computeUnplannedItems({
+        entries: semesterEntries,
+        groups: relevantGroups,
+        templates: templates ?? [],
+        teachingWeeks,
+      }),
+    [semesterEntries, relevantGroups, templates, teachingWeeks],
+  );
+
+  // Panel ma sens tylko dla konkretnej siatki i semestru — inaczej nie wiadomo,
+  // czyje godziny liczyc (tak samo jak przy przycisku "Dodaj zajecia").
+  const showUnplanned = !allSpecializations && !!version && typeof semester === 'number';
+
   const days = daysForMode(studyMode);
 
   // Niezalezne filtry Sala/Prowadzacy — ograniczaja TYLKO to, co widac na siatce.
@@ -238,19 +274,53 @@ export default function TemplateTab() {
     [templates, roomFilter, instructorFilter, classTypeFilter],
   );
 
-  const activeTemplate = templates?.find((item) => item.id === activeId) ?? null;
+  /**
+   * Wspolny opis tego, co akurat jedzie pod kursorem — gotowy wzorzec z siatki albo
+   * pozycja z backlogu. Dzieki temu podglad kolizji i ramka podpowiedzi maja jedno
+   * zrodlo, mimo ze backlog nie zna jeszcze sali ani dokladnej dlugosci zajec.
+   */
+  const dragSubject = useMemo(() => {
+    if (!activeId) return null;
+
+    const template = templates?.find((item) => item.id === activeId);
+    if (template) {
+      const blockCount = template.endBlock.order - template.startBlock.order + 1;
+      return {
+        excludeTemplateId: template.id,
+        blockCount,
+        roomId: template.room.id as string | null,
+        instructorId: template.instructor.id as string | null,
+        groupId: template.studentGroup?.id ?? null,
+        weekType: template.weekType,
+      };
+    }
+
+    const item = unplannedItems.find((entry) => entry.key === activeId);
+    if (item) {
+      return {
+        excludeTemplateId: null,
+        blockCount: suggestedBlockCount(item, MAX_TEMPLATE_BLOCKS),
+        // Sale wskaze dopiero dialog, wiec kolizji sal na tym etapie nie sprawdzamy.
+        roomId: null,
+        instructorId: item.instructorId,
+        groupId: item.group.id,
+        weekType: 'EVERY' as WeekType,
+      };
+    }
+    return null;
+  }, [activeId, templates, unplannedItems]);
 
   // Dla przeciaganego bloku: ktore komorki (dzien::blok) sa wolne, a ktore koliduja
   // z sala/prowadzacym/grupa (cala rodzina) innego wzorca w tym roku akademickim.
   // Podglad wizualny — ostateczna walidacja zawsze dzieje sie na backendzie przy zapisie.
   const cellAvailability = useMemo(() => {
-    if (!activeTemplate || !blocks) return null;
+    if (!dragSubject || !blocks) return null;
 
-    const span = activeTemplate.endBlock.order - activeTemplate.startBlock.order;
-    const familyIds = activeTemplate.studentGroup
-      ? getGroupFamilyIds(activeTemplate.studentGroup.id, groups ?? [])
+    const span = dragSubject.blockCount - 1;
+    const familyIds = dragSubject.groupId
+      ? getGroupFamilyIds(dragSubject.groupId, groups ?? [])
       : [];
-    const others = (allTemplates ?? []).filter((t) => t.id !== activeTemplate.id);
+    const others = (allTemplates ?? []).filter((t) => t.id !== dragSubject.excludeTemplateId);
 
     const map = new Map<string, boolean>();
     for (const day of days) {
@@ -261,14 +331,14 @@ export default function TemplateTab() {
         if (available && endBlock) {
           const sameDay = others.filter((t) => t.dayOfWeek === day.key);
           const conflict = sameDay.some((t) => {
-            if (!weekTypesConflict(t.weekType, activeTemplate.weekType)) return false;
+            if (!weekTypesConflict(t.weekType, dragSubject.weekType)) return false;
             if (!rangesOverlap(startBlock.order, endBlock.order, t.startBlock.order, t.endBlock.order)) {
               return false;
             }
             return (
-              t.room.id === activeTemplate.room.id ||
-              t.instructor.id === activeTemplate.instructor.id ||
-              (t.studentGroup && familyIds.includes(t.studentGroup.id))
+              (!!dragSubject.roomId && t.room.id === dragSubject.roomId) ||
+              (!!dragSubject.instructorId && t.instructor.id === dragSubject.instructorId) ||
+              (!!t.studentGroup && familyIds.includes(t.studentGroup.id))
             );
           });
           available = !conflict;
@@ -278,7 +348,7 @@ export default function TemplateTab() {
       }
     }
     return map;
-  }, [activeTemplate, allTemplates, blocks, days, groups, studyMode]);
+  }, [dragSubject, allTemplates, blocks, days, groups, studyMode]);
 
   const moveMutation = useMutation({
     mutationFn: ({
@@ -303,15 +373,14 @@ export default function TemplateTab() {
   // blockCount = pelna dlugosc zajec, wiec przy zajeciach podwojnych podpowiedz obejmuje oba
   // pola, nie jedno. Przycinamy do konca dnia, zeby ramka nie wychodzila poza siatke.
   const dropPreview = useMemo(() => {
-    if (!overId || !activeTemplate || !blocks) return null;
+    if (!overId || !dragSubject || !blocks) return null;
     const [dayKey, blockId] = overId.split('::');
     const startIndex = blocks.findIndex((b) => b.id === blockId);
     if (!dayKey || startIndex === -1) return null;
-    const span = activeTemplate.endBlock.order - activeTemplate.startBlock.order;
-    const blockCount = Math.min(span + 1, blocks.length - startIndex);
+    const blockCount = Math.min(dragSubject.blockCount, blocks.length - startIndex);
     const available = !!cellAvailability?.get(overId);
     return { dayKey, startIndex, blockCount, available };
-  }, [overId, activeTemplate, blocks, cellAvailability]);
+  }, [overId, dragSubject, blocks, cellAvailability]);
 
   const onDragStart = (event: DragStartEvent) => setActiveId(String(event.active.id));
   const onDragOver = (event: DragOverEvent) =>
@@ -327,15 +396,33 @@ export default function TemplateTab() {
     const { active, over } = event;
     if (!over || !blocks) return;
 
-    const template = templates?.find((item) => item.id === active.id);
-    if (!template) return;
-
     // id komorki ma format "DZIEN::idBloku" (patrz DroppableCell).
     const [dayKey, blockId] = String(over.id).split('::');
     if (!dayKey || !blockId) return;
 
     const newStart = blocks.find((block) => block.id === blockId);
     if (!newStart) return;
+
+    // Pozycja z backlogu nie jest jeszcze wzorcem — nie zna sali, wiec zamiast zapisu
+    // otwieramy dialog z tym, co juz wiadomo. Sale planista wskazuje sam.
+    const unplanned = unplannedItems.find((item) => item.key === active.id);
+    if (unplanned) {
+      setEditing(null);
+      setPrefill({
+        dayOfWeek: dayKey as DayOfWeek,
+        startBlockId: newStart.id,
+        curriculumEntryId: unplanned.curriculumEntryId,
+        classType: unplanned.classType,
+        studentGroupId: unplanned.group.id,
+        ...(unplanned.instructorId ? { instructorId: unplanned.instructorId } : {}),
+        blockCount: suggestedBlockCount(unplanned, MAX_TEMPLATE_BLOCKS),
+      });
+      setDialogOpen(true);
+      return;
+    }
+
+    const template = templates?.find((item) => item.id === active.id);
+    if (!template) return;
 
     // Dlugosc zajec zostaje bez zmian — przeciagniecie zmienia tylko poczatek.
     const span = template.endBlock.order - template.startBlock.order;
@@ -526,6 +613,17 @@ export default function TemplateTab() {
             onDragCancel={onDragCancel}
             onDragEnd={onDragEnd}
           >
+            {/* Wewnatrz DndContext, bo kafelki backlogu sa zrodlem przeciagania na siatke. */}
+            {showUnplanned && (
+              <div className="mb-4">
+                <UnplannedPanel
+                  items={unplannedItems}
+                  missingGroupTypes={missingGroupTypes}
+                  disabled={!canEdit}
+                />
+              </div>
+            )}
+
             <div className="overflow-x-auto rounded-lg border">
               <div className="flex min-w-max">
                 <TimeBlockColumn blocks={blocks} />

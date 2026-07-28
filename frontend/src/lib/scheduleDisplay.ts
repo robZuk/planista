@@ -2,6 +2,9 @@ import type { ClassType, DayOfWeek, EntryStatus, RoomType, StudyMode, WeekType }
 
 export const CLASS_TYPES: ClassType[] = ['LECTURE', 'EXERCISE', 'LAB', 'PROJECT', 'SEMINAR'];
 
+/** Maksymalna dlugosc jednych zajec we wzorcu, w blokach godzinowych. */
+export const MAX_TEMPLATE_BLOCKS = 4;
+
 /** Jednoliterowe skroty na blokach w siatce — miejsca jest tam malo. */
 export const CLASS_LABELS: Record<ClassType, string> = {
   LECTURE: 'W',

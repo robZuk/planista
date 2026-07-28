@@ -32,6 +32,7 @@ import { getScheduleErrorMessage } from '@/lib/scheduleErrors';
 import {
   CLASS_FULL_LABELS,
   CLASS_TYPES,
+  MAX_TEMPLATE_BLOCKS,
   ROOM_TYPES_FOR_CLASS,
   WEEK_TYPE_LABELS,
   daysForMode,
@@ -47,8 +48,6 @@ import type {
   WeekType,
 } from '@/types';
 
-const MAX_BLOCKS = 4;
-
 const templateSchema = z.object({
   curriculumEntryId: z.string().min(1, 'Wybierz przedmiot z siatki'),
   classType: z.enum(CLASS_TYPES as [ClassType, ...ClassType[]]),
@@ -57,11 +56,27 @@ const templateSchema = z.object({
   studentGroupId: z.string().min(1, 'Wybierz grupe'),
   dayOfWeek: z.string().min(1, 'Wybierz dzien'),
   startBlockId: z.string().min(1, 'Wybierz godzine rozpoczecia'),
-  blockCount: z.number().int().min(1).max(MAX_BLOCKS),
+  blockCount: z.number().int().min(1).max(MAX_TEMPLATE_BLOCKS),
   weekType: z.enum(['EVERY', 'EVEN', 'ODD']),
 });
 
 type TemplateValues = z.infer<typeof templateSchema>;
+
+/**
+ * Wstepne wypelnienie formularza. Klikniecie w pusta komorke siatki daje sam termin;
+ * upuszczenie pozycji z listy "do zaplanowania" — dodatkowo przedmiot, forme, grupe,
+ * prowadzacego i sugerowana dlugosc. Sali nie da sie wywnioskowac z siatki, wiec
+ * zostaje pusta w obu przypadkach.
+ */
+export interface TemplatePrefill {
+  dayOfWeek: DayOfWeek;
+  startBlockId: string;
+  curriculumEntryId?: string;
+  classType?: ClassType;
+  studentGroupId?: string;
+  instructorId?: string;
+  blockCount?: number;
+}
 
 interface Props {
   open: boolean;
@@ -71,8 +86,7 @@ interface Props {
   studyMode: StudyMode;
   curriculumEntries: CurriculumEntry[];
   groups: StudentGroup[];
-  /** Wypelnienie z klikniecia w pusta komorke siatki. */
-  prefill?: { dayOfWeek: DayOfWeek; startBlockId: string } | null;
+  prefill?: TemplatePrefill | null;
   editing?: ScheduleTemplate | null;
 }
 
@@ -134,14 +148,16 @@ export function TemplateDialog({
       });
     } else {
       form.reset({
-        curriculumEntryId: '',
-        classType: 'LECTURE',
-        instructorId: '',
+        curriculumEntryId: prefill?.curriculumEntryId ?? '',
+        classType: prefill?.classType ?? 'LECTURE',
+        instructorId: prefill?.instructorId ?? '',
+        // Sala zostaje pusta takze przy przeciagnieciu z backlogu — to jedyna rzecz,
+        // ktorej siatka nie okresla, wiec musi ja swiadomie wskazac planista.
         roomId: '',
-        studentGroupId: '',
+        studentGroupId: prefill?.studentGroupId ?? '',
         dayOfWeek: prefill?.dayOfWeek ?? daysForMode(studyMode)[0]!.key,
         startBlockId: prefill?.startBlockId ?? '',
-        blockCount: 1,
+        blockCount: prefill?.blockCount ?? 1,
         weekType: 'EVERY',
       });
     }
@@ -429,7 +445,7 @@ export function TemplateDialog({
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        {Array.from({ length: MAX_BLOCKS }, (_, i) => i + 1).map((count) => (
+                        {Array.from({ length: MAX_TEMPLATE_BLOCKS }, (_, i) => i + 1).map((count) => (
                           <SelectItem key={count} value={String(count)}>
                             {count}
                           </SelectItem>
