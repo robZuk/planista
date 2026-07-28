@@ -77,6 +77,12 @@ export interface TemplateValidationDto {
   excludeId?: string;
 }
 
+/**
+ * Walidacja wzorca patrzy WYLACZNIE na inne wzorce, a walidacja terminu wylacznie
+ * na inne terminy. To celowe: wzorzec i kalendarz to dwa rozdzielone swiaty, ktore
+ * spotykaja sie dopiero przy generowaniu semestru (tam konflikty liczy generator).
+ * Nie "naprawiaj" tego, dokladajac tu zapytania o ScheduleEntry.
+ */
 export async function validateTemplate(dto: TemplateValidationDto): Promise<ValidationError | null> {
   const range = await loadBlockRange(dto.startBlockId, dto.endBlockId);
   if (!range.ok) return { code: 'BAD_BLOCK_RANGE', details: { message: range.error } };

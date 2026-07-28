@@ -5,7 +5,9 @@ import { isNotFoundError } from '../lib/prismaErrors';
 import { validateEntry, isBadRequestError, checkRoomType } from '../services/scheduleValidation';
 import { getGroupFamilyIds } from '../lib/groupFamily';
 import { getCallerInstructorId } from '../lib/callerInstructor';
-import { rangesOverlap, dayNumToEnum, checkTimeWindow, dateToStr } from '../lib/scheduleTime';
+import { getCallerFacultyId } from '../lib/callerFaculty';
+import { resolveFacultyId } from '../lib/curriculumFaculty';
+import { rangesOverlap, checkTimeWindow, dateToStr } from '../lib/scheduleTime';
 
 const entryInclude = {
   room: { select: { id: true, number: true, type: true, building: { select: { id: true, name: true } } } },
@@ -32,12 +34,21 @@ export async function getAll(req: Request, res: Response): Promise<void> {
     if (from) dateFilter.gte = new Date(String(from) + 'T00:00:00.000Z');
     if (to) dateFilter.lte = new Date(String(to) + 'T23:59:59.999Z');
 
+    // Dziekanat widzi tylko wlasny wydzial — nadpisujemy ewentualny parametr z zapytania.
+    const facultyId =
+      req.user!.role === 'DEAN_OFFICE'
+        ? await getCallerFacultyId(req.user!.id)
+        : req.query.facultyId
+          ? String(req.query.facultyId)
+          : undefined;
+
     const data = await prisma.scheduleEntry.findMany({
       where: {
         ...(Object.keys(dateFilter).length ? { date: dateFilter } : {}),
         ...(studentGroupId ? { studentGroupId: String(studentGroupId) } : {}),
         ...(instructorId ? { instructorId: String(instructorId) } : {}),
         ...(status ? { status: status as EntryStatus } : {}),
+        ...(facultyId ? { facultyId } : {}),
       },
       include: entryInclude,
       // W jednym bloku czasowym siedzi zwykle kilka terminow naraz (rozne grupy i sale),
@@ -90,6 +101,21 @@ export async function create(req: Request, res: Response): Promise<void> {
       }
     }
 
+    // Wydzial bierzemy z siatki takze dla terminu recznego — to po nim generator
+    // rozpozna, ze ma go skasowac przy nadpisywaniu kalendarza wydzialu.
+    const facultyId = await resolveFacultyId(body.curriculumEntryId);
+    if (!facultyId) {
+      res.status(400).json({ error: 'Wpis siatki nie istnieje' });
+      return;
+    }
+    if (req.user!.role === 'DEAN_OFFICE') {
+      const myFacultyId = await getCallerFacultyId(req.user!.id);
+      if (myFacultyId !== facultyId) {
+        res.status(403).json({ error: 'Mozesz dodawac terminy tylko w obrebie swojego wydzialu' });
+        return;
+      }
+    }
+
     const error = await validateEntry({
       date: new Date(body.date),
       roomId: body.roomId,
@@ -113,6 +139,7 @@ export async function create(req: Request, res: Response): Promise<void> {
         instructorId: body.instructorId,
         studentGroupId: body.studentGroupId ?? null,
         curriculumEntryId: body.curriculumEntryId,
+        facultyId,
         startBlockId: body.startBlockId,
         endBlockId: body.endBlockId,
         templateId: null,
@@ -193,8 +220,11 @@ export async function remove(req: Request, res: Response): Promise<void> {
 /**
  * Przeniesienie terminu (drag&drop).
  *  scope 'ONE' — tylko ten termin (nowa data + zakres blokow + opc. sala/prowadzacy).
- *  scope 'ALL' — caly semestr: aktualizuje WZORZEC i przesuwa przyszle terminy na
- *                nowy dzien tygodnia + bloki (pomija dni wolne).
+ *  scope 'ALL' — wszystkie przyszle terminy tej serii, przesuniete na nowy dzien
+ *                tygodnia + bloki (pomija dni wolne i terminy odczepione).
+ *
+ * Obie operacje sa CZYSTO KALENDARZOWE — wzorzec tygodnia zostaje nietkniety.
+ * Przy najblizszym generowaniu semestru kalendarz i tak powstanie od nowa z wzorcow.
  */
 export async function move(req: Request, res: Response): Promise<void> {
   try {
@@ -254,11 +284,9 @@ export async function move(req: Request, res: Response): Promise<void> {
           endBlockId: newEndBlockId,
           roomId: targetRoomId,
           instructorId: targetInstructorId,
-          // Reczne przeniesienie pojedynczego terminu odczepia go od serii. originalDate
-          // zapamietuje pierwotny slot (tylko za pierwszym razem), zeby generator nie odtworzyl
-          // powstalej "luki" jako duplikatu.
+          // Reczne przeniesienie pojedynczego terminu odczepia go od serii — kolejne
+          // przesuniecie calej serii (scope ALL) juz go pominie.
           detached: true,
-          originalDate: existing.originalDate ?? existing.date,
         },
         include: entryInclude,
       });
@@ -267,8 +295,10 @@ export async function move(req: Request, res: Response): Promise<void> {
     }
 
     // ─── scope ALL ──────────────────────────────────────────
+    // Seria = terminy dzielace wzorzec. Termin reczny (albo osierocony po usunieciu
+    // wzorca) nie nalezy do zadnej serii, wiec nie ma czego przesuwac.
     if (!existing.templateId) {
-      res.status(400).json({ error: 'Brak wzorca — nie mozna przeniesc calego semestru' });
+      res.status(400).json({ error: 'Brak serii — ten termin nie pochodzi z wzorca' });
       return;
     }
 
@@ -354,19 +384,9 @@ export async function move(req: Request, res: Response): Promise<void> {
       }
     }
 
-    // Aktualizuj wzorzec + przesun przyszle terminy w transakcji.
-    await prisma.$transaction([
-      prisma.scheduleTemplate.update({
-        where: { id: existing.templateId },
-        data: {
-          dayOfWeek: dayNumToEnum[targetDayNum],
-          startBlockId: newStartBlockId,
-          endBlockId: newEndBlockId,
-          roomId: targetRoomId,
-          instructorId: targetInstructorId,
-        },
-      }),
-      ...movable.map(({ entry, target }) =>
+    // Przesuwamy WYLACZNIE terminy — wzorzec tygodnia zostaje nietkniety.
+    await prisma.$transaction(
+      movable.map(({ entry, target }) =>
         prisma.scheduleEntry.update({
           where: { id: entry.id },
           data: {
@@ -378,12 +398,12 @@ export async function move(req: Request, res: Response): Promise<void> {
           },
         }),
       ),
-    ]);
+    );
 
     const skippedHolidays = futureEntries.length - movable.length;
     res.json({
       data: { updatedCount: movable.length, skippedHolidays },
-      message: `Zaktualizowano wzorzec i ${movable.length} przyszlych terminow${skippedHolidays > 0 ? `, pominieto ${skippedHolidays} (dni wolne)` : ''}`,
+      message: `Przeniesiono ${movable.length} przyszlych terminow (wzorzec bez zmian)${skippedHolidays > 0 ? `, pominieto ${skippedHolidays} (dni wolne)` : ''}`,
     });
   } catch (error) {
     if (isNotFoundError(error)) {
