@@ -34,22 +34,42 @@ interface NewEntry {
 /**
  * Generator terminow semestru.
  *
- * Kalendarz wydzialu jest NADPISYWANY W CALOSCI: wszystkie terminy tego wydzialu
- * w zakresie dat semestru — takze dodane recznie i odwolane — sa kasowane, po czym
- * plan powstaje od zera z aktualnych wzorcow. To jedyny punkt synchronizacji miedzy
- * wzorcem tygodnia a kalendarzem; poza nim oba swiaty sa rozdzielone.
+ * Kalendarz wydzialu jest NADPISYWANY W CALOSCI, ale w granicach JEDNEGO TRYBU STUDIOW:
+ * wszystkie terminy tego wydzialu i tego trybu w zakresie dat semestru — takze dodane
+ * recznie i odwolane — sa kasowane, po czym plan powstaje od zera z aktualnych wzorcow.
+ * To jedyny punkt synchronizacji miedzy wzorcem tygodnia a kalendarzem; poza nim oba
+ * swiaty sa rozdzielone.
  *
- * Konflikty liczymy w pamieci wzgledem terminow POZOSTALYCH wydzialow (sale
- * i prowadzacy sa wspoldzieleni), dokladajac na biezaco swiezo zaplanowane zajecia.
+ * Tryb bierzemy z siatki (curriculumEntry -> curriculumVersion.studyMode), bo termin
+ * go nie przechowuje. Bez tego zawezenia stacjonarne i niestacjonarne kasowaly sie
+ * nawzajem — dziela te same daty, a rozpisywane sa osobno.
+ *
+ * Opcjonalny `scope` (kierunek / specjalnosc / numer semestru) zaweza nadpisanie dalej.
+ * KLUCZOWE: zaweza rowniez KASOWANIE, nie tylko tworzenie. Gdyby dotyczyl samych wzorcow,
+ * rozpisanie jednego semestru kasowaloby plan calego wydzialu i odtwarzalo z niego
+ * wylacznie ten semestr. Zakres kasowania i zakres tworzenia musza byc tym samym zbiorem.
+ *
+ * Konflikty liczymy w pamieci wzgledem WSZYSTKICH terminow, ktore przezyja nadpisanie
+ * (inne wydzialy oraz drugi tryb tego wydzialu — sale i prowadzacy sa wspoldzieleni),
+ * dokladajac na biezaco swiezo zaplanowane zajecia.
  */
 export async function generateSemester(req: Request, res: Response): Promise<void> {
   try {
-    const { templateIds, academicYear, semesterType, studyMode, facultyId: bodyFacultyId } = req.body as {
+    const {
+      templateIds,
+      academicYear,
+      semesterType,
+      studyMode,
+      facultyId: bodyFacultyId,
+      scope,
+    } = req.body as {
       templateIds?: string[];
       academicYear?: string;
       semesterType?: SemesterType;
       studyMode?: StudyMode;
       facultyId?: string;
+      /** Zawezenie nadpisania — patrz komentarz nad funkcja. */
+      scope?: { fieldOfStudyId?: string; specializationId?: string; semester?: number };
     };
 
     if (!templateIds?.length || !academicYear || !semesterType || !studyMode) {
@@ -82,6 +102,30 @@ export async function generateSemester(req: Request, res: Response): Promise<voi
     rangeEnd.setUTCHours(23, 59, 59, 999);
     const dateRange = { gte: rangeStart, lte: rangeEnd };
 
+    // Tryb studiow nie jest wlasciwoscia terminu — wyprowadzamy go z siatki. Oba tryby
+    // dziela te same daty, wiec bez tego zawezenia nadpisanie planu niestacjonarnego
+    // kasowalo caly plan stacjonarny tego wydzialu (i go nie odtwarzalo, bo rozpisujemy
+    // wylacznie wzorce wybranego trybu).
+    //
+    // Do tego dochodzi opcjonalne zawezenie z `scope`. Jeden warunek na `curriculumEntry`,
+    // bo powtorzony klucz relacji nadpisalby poprzedni.
+    const semesterScope = Number.isInteger(scope?.semester) ? scope!.semester : undefined;
+    const modeScope = {
+      curriculumEntry: {
+        ...(semesterScope ? { semester: semesterScope } : {}),
+        curriculumVersion: {
+          is: {
+            studyMode,
+            ...(scope?.specializationId ? { specializationId: scope.specializationId } : {}),
+            ...(scope?.fieldOfStudyId && !scope.specializationId
+              ? { specialization: { is: { fieldOfStudyId: scope.fieldOfStudyId } } }
+              : {}),
+          },
+        },
+      },
+    };
+    const doomedScope = { facultyId, date: dateRange, ...modeScope };
+
     const holidays = await prisma.publicHoliday.findMany({ where: { date: dateRange } });
     const holidaySet = new Set(holidays.map((h) => dateToStr(h.date)));
 
@@ -91,8 +135,23 @@ export async function generateSemester(req: Request, res: Response): Promise<voi
 
     const templates = await prisma.scheduleTemplate.findMany({
       // Zawezenie do wydzialu — wzorce spoza niego nie zostana rozpisane, nawet jesli
-      // ich id trafi w templateIds (ochrona przed spreparowanym zadaniem).
-      where: { id: { in: templateIds }, facultyId },
+      // ich id trafi w templateIds (ochrona przed spreparowanym zadaniem). To samo dotyczy
+      // `scope`: rozpisujemy dokladnie to, co przed chwila skasowalismy, inaczej wzorzec
+      // spoza zakresu tworzylby termin, ktorego nadpisanie nie objelo — czyli duplikat.
+      where: {
+        id: { in: templateIds },
+        facultyId,
+        ...(semesterScope ? { semester: semesterScope } : {}),
+        ...(scope?.specializationId || scope?.fieldOfStudyId
+          ? {
+              curriculumEntry: {
+                curriculumVersion: scope.specializationId
+                  ? { specializationId: scope.specializationId }
+                  : { specialization: { fieldOfStudyId: scope.fieldOfStudyId } },
+              },
+            }
+          : {}),
+      },
       include: {
         curriculumEntry: { include: { subject: { select: { name: true } } } },
         startBlock: { select: { order: true, startTime: true } },
@@ -102,14 +161,20 @@ export async function generateSemester(req: Request, res: Response): Promise<voi
 
     // ─── Co znika przy nadpisaniu ─────────────────────────────
     const doomed = await prisma.scheduleEntry.findMany({
-      where: { facultyId, date: dateRange },
+      where: doomedScope,
       select: { templateId: true },
     });
     const deletedManual = doomed.filter((e) => e.templateId === null).length;
 
-    // ─── Zajetosc: terminy pozostalych wydzialow ──────────────
+    // ─── Zajetosc: wszystko, co przezyje nadpisanie ───────────
+    // Nie tylko inne wydzialy — po zawezeniu do trybu zostaje takze plan drugiego trybu
+    // TEGO wydzialu, a on rowniez zajmuje sale i prowadzacych w tych samych dniach.
     const survivors = await prisma.scheduleEntry.findMany({
-      where: { date: dateRange, status: { not: 'CANCELLED' }, facultyId: { not: facultyId } },
+      where: {
+        date: dateRange,
+        status: { not: 'CANCELLED' },
+        NOT: { AND: [{ facultyId }, modeScope] },
+      },
       select: {
         date: true,
         roomId: true,
@@ -251,9 +316,9 @@ export async function generateSemester(req: Request, res: Response): Promise<voi
       }
     }
 
-    // ─── Zapis atomowy: kasujemy kalendarz wydzialu i wstawiamy nowy ───
+    // ─── Zapis atomowy: kasujemy kalendarz wydzialu w tym trybie i wstawiamy nowy ───
     await prisma.$transaction([
-      prisma.scheduleEntry.deleteMany({ where: { facultyId, date: dateRange } }),
+      prisma.scheduleEntry.deleteMany({ where: doomedScope }),
       prisma.scheduleEntry.createMany({ data: toCreate }),
     ]);
 

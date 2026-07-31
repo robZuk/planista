@@ -1,10 +1,10 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Controller, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import type { ColumnDef } from '@tanstack/react-table';
-import { CalendarRange, Pencil, Plus, Trash2 } from 'lucide-react';
+import { CalendarRange, Pencil, Plus, Trash2, TriangleAlert } from 'lucide-react';
 import { toast } from 'sonner';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
@@ -32,7 +32,13 @@ import { PageHeader } from '@/components/PageHeader';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { DataTable } from '@/components/data-table/DataTable';
 import { SortableHeader } from '@/components/data-table/SortableHeader';
-import { createCalendar, deleteCalendar, fetchCalendars, updateCalendar } from '@/api/schedule';
+import {
+  createCalendar,
+  deleteCalendar,
+  fetchCalendars,
+  fetchEntries,
+  updateCalendar,
+} from '@/api/schedule';
 import { fetchAcademicYears } from '@/api/curriculum';
 import { fetchFaculties } from '@/api/faculties';
 import { getErrorMessage } from '@/lib/errors';
@@ -42,6 +48,7 @@ import { STUDY_MODE_LABELS, STUDY_MODES } from '@/lib/labels';
 import { useAuthStore } from '@/store/authStore';
 import type { SemesterCalendar, SemesterType, StudyMode } from '@/types';
 
+/** Wartosc pola "Wydzial" oznaczajaca zalozenie kalendarza po wierszu na kazdy wydzial. */
 const ALL_FACULTIES = '__all__';
 
 const calendarSchema = z
@@ -49,7 +56,7 @@ const calendarSchema = z
     academicYear: z.string().min(1, 'Wybierz rok akademicki'),
     semesterType: z.enum(['WINTER', 'SUMMER']),
     studyMode: z.enum(['FULL_TIME', 'PART_TIME']),
-    facultyId: z.string(),
+    facultyId: z.string().min(1, 'Wybierz wydzial'),
     startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Wybierz date poczatku'),
     endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Wybierz date konca'),
   })
@@ -67,12 +74,15 @@ const COLUMN_LABELS = {
   faculty: 'Wydzial',
   range: 'Zakres',
   teachingWeeks: 'Tygodni',
+  usage: 'Plan',
 };
 
 /**
  * Kalendarz semestru wyznacza zakres dat, na ktory generator rozpisuje wzorce.
- * Kalendarz wydzialowy ma pierwszenstwo nad ogolnouczelnianym — dzieki temu wydzial
- * moze miec wlasne terminy, nie dublujac calej konfiguracji.
+ * Kazdy kalendarz nalezy do wydzialu — wspolne daty dla calej uczelni zaklada sie
+ * jednym gestem ("wszystkie wydzialy"), ale zapisuja sie jako osobne, jawne wiersze.
+ * Wydzial bez kalendarza dostaje daty wyliczone z roku akademickiego (i traci
+ * przelicznik godzin tygodniowych), dlatego braki wypisujemy nad tabela.
  */
 export default function SemesterCalendarsPage() {
   const queryClient = useQueryClient();
@@ -100,24 +110,100 @@ export default function SemesterCalendarsPage() {
     },
   });
 
+  const newStart = form.watch('startDate');
+  const newEnd = form.watch('endDate');
+  // Wydluzenie semestru niczego nie ucina, wiec pytamy o terminy dopiero przy skracaniu —
+  // inaczej samo otwarcie edycji ciagnelo caly semestr zajec bez powodu.
+  const isShrinking =
+    !!editing &&
+    !!newStart &&
+    !!newEnd &&
+    (newStart > toDateKey(editing.startDate) || newEnd < toDateKey(editing.endDate));
+
+  // Podglad skrocenia semestru. Backend odrzuca zmiane, gdy poza nowym zakresem zostana
+  // zajecia (409) — tu liczymy to samo na zywo, zeby nie dowiadywac sie o tym dopiero
+  // z bledu po kliknieciu "Zapisz". Zakres pytania to STARY zakres kalendarza.
+  const { data: rangeEntries } = useQuery({
+    queryKey: ['schedule-entries', 'calendar-edit', editing?.id],
+    queryFn: () =>
+      fetchEntries({
+        from: toDateKey(editing!.startDate),
+        to: toDateKey(editing!.endDate),
+        ...(editing!.facultyId ? { facultyId: editing!.facultyId } : {}),
+      }),
+    enabled: dialogOpen && !!editing && editing.entryCount > 0 && isShrinking,
+  });
+  const cutEntries = useMemo(() => {
+    if (!editing || !rangeEntries) return 0;
+    return rangeEntries.filter((entry) => {
+      // Lustro guardu z backendu: odwolane zajecia go nie blokuja, a kalendarz
+      // ogolnouczelniany patrzy na wszystkie wydzialy — stad brak filtra wydzialu wyzej.
+      if (entry.status === 'CANCELLED') return false;
+      if (entry.curriculumEntry.curriculumVersion.studyMode !== editing.studyMode) return false;
+      const date = toDateKey(entry.date);
+      return date < newStart || date > newEnd;
+    }).length;
+  }, [editing, rangeEntries, newStart, newEnd]);
+
+  /**
+   * Braki w pokryciu. Po usunieciu kalendarza ogolnouczelnianego nie ma juz siatki
+   * bezpieczenstwa: wydzial bez wlasnego wpisu dostaje daty wyliczone z roku, bez
+   * `teachingWeeks`. Sprawdzamy tylko te kombinacje [rok, semestr, tryb], ktore juz
+   * gdziekolwiek istnieja — brak calego rocznika to nie luka, tylko rok nieustawiony.
+   *
+   * Dziekanat widzi wylacznie swoj wydzial, wiec nie ma z czym porownywac — dla niego
+   * ten podglad nie ma sensu i go nie liczymy.
+   */
+  const gaps = useMemo(() => {
+    if (!isAdmin || !data || !faculties?.length) return [];
+    const byScope = new Map<string, Set<string>>();
+    for (const calendar of data) {
+      const key = `${calendar.academicYear}|${calendar.semesterType}|${calendar.studyMode}`;
+      const set = byScope.get(key) ?? new Set<string>();
+      set.add(calendar.facultyId);
+      byScope.set(key, set);
+    }
+    return [...byScope.entries()]
+      .map(([key, covered]) => {
+        const [academicYear, semesterType, studyMode] = key.split('|');
+        return {
+          label: `${academicYear} ${SEMESTER_TYPE_LABELS[semesterType as SemesterType].toLowerCase()}, ${STUDY_MODE_LABELS[studyMode as StudyMode].toLowerCase()}`,
+          faculties: faculties.filter((f) => !covered.has(f.id)).map((f) => f.shortName),
+        };
+      })
+      .filter((gap) => gap.faculties.length > 0)
+      .sort((a, b) => a.label.localeCompare(b.label));
+  }, [isAdmin, data, faculties]);
+
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ['semester-calendars'] });
 
   const saveMutation = useMutation({
-    mutationFn: (values: CalendarValues) =>
+    // Zwracamy gotowy komunikat, bo przy zakladaniu hurtowym liczy sie to, co odeslal
+    // serwer ("dla N wydzialow, M pominieto"), a nie stale "utworzono".
+    mutationFn: async (values: CalendarValues): Promise<string> => {
       // Klucz kalendarza (rok, semestr, tryb, wydzial) jest niezmienny — edycja
       // dotyczy wylacznie dat, tak jak na backendzie.
-      editing
-        ? updateCalendar(editing.id, { startDate: values.startDate, endDate: values.endDate })
-        : createCalendar({
-            academicYear: values.academicYear,
-            semesterType: values.semesterType as SemesterType,
-            studyMode: values.studyMode as StudyMode,
-            facultyId: values.facultyId === ALL_FACULTIES ? null : values.facultyId,
-            startDate: values.startDate,
-            endDate: values.endDate,
-          }),
-    onSuccess: () => {
-      toast.success(editing ? 'Kalendarz zaktualizowany' : 'Kalendarz semestru utworzony');
+      if (editing) {
+        await updateCalendar(editing.id, {
+          startDate: values.startDate,
+          endDate: values.endDate,
+        });
+        return 'Kalendarz zaktualizowany';
+      }
+      const result = await createCalendar({
+        academicYear: values.academicYear,
+        semesterType: values.semesterType as SemesterType,
+        studyMode: values.studyMode as StudyMode,
+        ...(values.facultyId === ALL_FACULTIES
+          ? { allFaculties: true }
+          : { facultyId: values.facultyId }),
+        startDate: values.startDate,
+        endDate: values.endDate,
+      });
+      return result.message;
+    },
+    onSuccess: (message) => {
+      toast.success(message);
       setDialogOpen(false);
       void invalidate();
     },
@@ -140,8 +226,8 @@ export default function SemesterCalendarsPage() {
       academicYear: years?.[0] ?? '',
       semesterType: 'WINTER',
       studyMode: 'FULL_TIME',
-      // Dziekanat zaklada wylacznie kalendarz swojego wydzialu.
-      facultyId: isAdmin ? ALL_FACULTIES : (me?.facultyId ?? ALL_FACULTIES),
+      // Admin domyslnie zaklada dla calej uczelni, dziekanat wylacznie dla siebie.
+      facultyId: isAdmin ? ALL_FACULTIES : (me?.facultyId ?? ''),
       startDate: '',
       endDate: '',
     });
@@ -154,14 +240,13 @@ export default function SemesterCalendarsPage() {
       academicYear: calendar.academicYear,
       semesterType: calendar.semesterType,
       studyMode: calendar.studyMode,
-      facultyId: calendar.facultyId ?? ALL_FACULTIES,
+      facultyId: calendar.facultyId,
       startDate: toDateKey(calendar.startDate),
       endDate: toDateKey(calendar.endDate),
     });
     setDialogOpen(true);
   };
 
-  // Dziekanat widzi kalendarze ogolnouczelniane (jako swoj fallback), ale ich nie edytuje.
   const canEditRow = (calendar: SemesterCalendar) =>
     canEdit && (isAdmin || calendar.facultyId === me?.facultyId);
 
@@ -186,14 +271,9 @@ export default function SemesterCalendarsPage() {
     },
     {
       id: 'faculty',
-      accessorFn: (row) => row.faculty?.shortName ?? '',
+      accessorFn: (row) => row.faculty.shortName,
       header: ({ column }) => <SortableHeader column={column}>Wydzial</SortableHeader>,
-      cell: ({ row }) =>
-        row.original.faculty ? (
-          <Badge variant="outline">{row.original.faculty.shortName}</Badge>
-        ) : (
-          <span className="text-muted-foreground">ogolnouczelniany</span>
-        ),
+      cell: ({ row }) => <Badge variant="outline">{row.original.faculty.shortName}</Badge>,
     },
     {
       id: 'range',
@@ -209,6 +289,24 @@ export default function SemesterCalendarsPage() {
       accessorKey: 'teachingWeeks',
       header: 'Tygodni',
       cell: ({ row }) => <span className="tabular-nums">{row.original.teachingWeeks}</span>,
+    },
+    {
+      id: 'usage',
+      accessorFn: (row) => row.entryCount,
+      header: ({ column }) => <SortableHeader column={column}>Plan</SortableHeader>,
+      cell: ({ row }) => {
+        const { templateCount, entryCount } = row.original;
+        if (templateCount === 0 && entryCount === 0) {
+          return <span className="text-sm text-muted-foreground">nieuzywany</span>;
+        }
+        return (
+          <span className="text-sm tabular-nums">
+            {templateCount} wzorcow
+            <span className="text-muted-foreground"> · </span>
+            {entryCount} terminow
+          </span>
+        );
+      },
     },
     ...(canEdit
       ? [
@@ -259,15 +357,37 @@ export default function SemesterCalendarsPage() {
         }
       />
 
-      <Alert>
-        <CalendarRange />
-        <AlertTitle>Wydzial ma pierwszenstwo</AlertTitle>
-        <AlertDescription>
-          Jesli wydzial ma wlasny kalendarz dla danego roku, semestru i trybu, generator uzyje
-          jego dat. W przeciwnym razie siegnie po kalendarz ogolnouczelniany, a gdy i tego nie
-          ma — po daty wyliczone z roku akademickiego.
-        </AlertDescription>
-      </Alert>
+      {gaps.length > 0 ? (
+        <Alert variant="destructive">
+          <TriangleAlert />
+          <AlertTitle>Wydzialy bez kalendarza</AlertTitle>
+          <AlertDescription>
+            <div className="space-y-1">
+              <p>
+                Generator uzyje dla nich dat wyliczonych z roku akademickiego, a wzorzec tygodnia
+                straci przelicznik godzin semestralnych na tygodniowe.
+              </p>
+              <ul className="text-sm">
+                {gaps.map((gap) => (
+                  <li key={gap.label}>
+                    <span className="font-medium">{gap.label}</span> — {gap.faculties.join(', ')}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </AlertDescription>
+        </Alert>
+      ) : (
+        <Alert>
+          <CalendarRange />
+          <AlertTitle>Kazdy wydzial ma wlasne daty</AlertTitle>
+          <AlertDescription>
+            Kalendarz zawsze nalezy do wydzialu. Wspolne terminy dla calej uczelni zakladasz
+            jednym gestem — wybierz „wszystkie wydzialy", a powstanie osobny wiersz dla kazdego.
+            Wydzial bez kalendarza dostanie daty wyliczone z roku akademickiego.
+          </AlertDescription>
+        </Alert>
+      )}
 
       <DataTable
         columns={columns}
@@ -396,7 +516,7 @@ export default function SemesterCalendarsPage() {
                             </SelectTrigger>
                             <SelectContent>
                               {isAdmin && (
-                                <SelectItem value={ALL_FACULTIES}>Ogolnouczelniany</SelectItem>
+                                <SelectItem value={ALL_FACULTIES}>Wszystkie wydzialy</SelectItem>
                               )}
                               {faculties?.map((faculty) => (
                                 <SelectItem key={faculty.id} value={faculty.id}>
@@ -407,10 +527,13 @@ export default function SemesterCalendarsPage() {
                           </Select>
                         )}
                       />
+                      <FieldError errors={[form.formState.errors.facultyId]} />
                       <FieldDescription>
-                        {isAdmin
-                          ? 'Ogolnouczelniany obowiazuje wydzialy bez wlasnego kalendarza.'
-                          : 'Kalendarz zakladasz dla swojego wydzialu.'}
+                        {!isAdmin
+                          ? 'Kalendarz zakladasz dla swojego wydzialu.'
+                          : form.watch('facultyId') === ALL_FACULTIES
+                            ? 'Powstanie osobny wiersz dla kazdego wydzialu. Te, ktore maja juz wlasny kalendarz dla tego semestru, zostana pominiete.'
+                            : 'Kazdy wydzial ma wlasny wiersz — pozostale mozesz ustawic osobno.'}
                       </FieldDescription>
                     </Field>
                   </div>
@@ -440,6 +563,17 @@ export default function SemesterCalendarsPage() {
                   <FieldError errors={[form.formState.errors.endDate]} />
                 </Field>
               </div>
+
+              {cutEntries > 0 && (
+                <Alert variant="destructive">
+                  <TriangleAlert />
+                  <AlertTitle>Poza nowym zakresem zostanie {cutEntries} zajec</AlertTitle>
+                  <AlertDescription>
+                    Serwer odrzuci takie skrocenie semestru. Najpierw przenies albo usun te
+                    terminy, potem zmien daty.
+                  </AlertDescription>
+                </Alert>
+              )}
             </FieldGroup>
           </form>
 
@@ -447,7 +581,13 @@ export default function SemesterCalendarsPage() {
             <Button variant="outline" onClick={() => setDialogOpen(false)}>
               Anuluj
             </Button>
-            <Button type="submit" form="calendar-form" disabled={saveMutation.isPending}>
+            {/* Skrocenie ucinajace zajecia i tak skonczy sie bledem 409 — nie ma po co
+                pozwalac w nie kliknac. */}
+            <Button
+              type="submit"
+              form="calendar-form"
+              disabled={saveMutation.isPending || cutEntries > 0}
+            >
               {saveMutation.isPending && <Spinner />}
               {editing ? 'Zapisz' : 'Dodaj'}
             </Button>
@@ -461,9 +601,14 @@ export default function SemesterCalendarsPage() {
         title="Usunac kalendarz semestru?"
         description={
           deleting
-            ? `${SEMESTER_TYPE_LABELS[deleting.semesterType]} ${deleting.academicYear} (${
-                deleting.faculty?.shortName ?? 'ogolnouczelniany'
-              }). Generowanie siegnie wtedy po kalendarz ogolnouczelniany albo daty domyslne.`
+            ? `${SEMESTER_TYPE_LABELS[deleting.semesterType]} ${deleting.academicYear}, ${STUDY_MODE_LABELS[
+                deleting.studyMode
+              ].toLowerCase()} (${deleting.faculty.shortName}). ` +
+              // Same daty znikaja, ale plan zostaje — po usunieciu kalendarza kolejne
+              // generowanie rozpisze go na INNYM zakresie dat, i to jest tu ryzyko.
+              `Zalezy od niego ${deleting.templateCount} wzorcow i ${deleting.entryCount} juz rozpisanych terminow — ` +
+              'te zostaja, ale kolejne generowanie uzyje dat wyliczonych z roku akademickiego, ' +
+              'wiec moze wypasc na innym zakresie.'
             : ''
         }
         isPending={deleteMutation.isPending}

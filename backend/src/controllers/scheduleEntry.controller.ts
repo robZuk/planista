@@ -1,5 +1,5 @@
 import type { Request, Response } from 'express';
-import type { ClassType, EntryStatus } from '@prisma/client';
+import type { ClassType, EntryStatus, SemesterType, StudyMode } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { isNotFoundError } from '../lib/prismaErrors';
 import { validateEntry, isBadRequestError, checkRoomType } from '../services/scheduleValidation';
@@ -7,6 +7,7 @@ import { getGroupFamilyIds } from '../lib/groupFamily';
 import { getCallerInstructorId } from '../lib/callerInstructor';
 import { getCallerFacultyId } from '../lib/callerFaculty';
 import { resolveFacultyId } from '../lib/curriculumFaculty';
+import { resolveSemesterRange } from '../lib/semesterCalendar';
 import { rangesOverlap, checkTimeWindow, dateToStr } from '../lib/scheduleTime';
 
 const entryInclude = {
@@ -14,12 +15,14 @@ const entryInclude = {
   instructor: { select: { id: true, firstName: true, lastName: true, title: true } },
   studentGroup: { select: { id: true, name: true } },
   // semester + specjalnosc (przez wersje siatki) — do filtrow w widoku kalendarza.
+  // studyMode bierzemy z siatki, a nie z wzorca: termin dodany recznie ma template = null,
+  // a filtr trybu w kalendarzu musi dzialac tak samo dla obu rodzajow terminow.
   curriculumEntry: {
     select: {
       id: true,
       semester: true,
       subject: { select: { id: true, name: true } },
-      curriculumVersion: { select: { specializationId: true } },
+      curriculumVersion: { select: { specializationId: true, studyMode: true } },
     },
   },
   template: { select: { id: true, dayOfWeek: true, weekType: true, studyMode: true } },
@@ -212,6 +215,109 @@ export async function remove(req: Request, res: Response): Promise<void> {
       res.status(404).json({ error: 'Termin nie znaleziony' });
       return;
     }
+    console.error(error);
+    res.status(500).json({ error: 'Blad serwera' });
+  }
+}
+
+/**
+ * Wyczyszczenie kalendarza semestru dla jednego wydzialu.
+ *
+ * Zakres dat bierzemy z tego samego zrodla co generator (kalendarz wydzialu →
+ * daty wyliczone z roku), a kasujemy terminy wydzialu z tego okna
+ * — takze reczne i odwolane. Tak samo jak nadpisanie przez generator, tyle ze bez
+ * tworzenia czegokolwiek w zamian. Wzorce tygodnia zostaja nietkniete.
+ *
+ * Zawezenie do trybu studiow tez jest wspolne z generatorem: plan drugiego trybu
+ * stoi na tych samych datach i nie ma go po co ruszac.
+ *
+ * Operacja jest destrukcyjna, wiec dotyczy dokladnie jednego wydzialu — nie ma
+ * wariantu "wszystkie wydzialy naraz".
+ */
+export async function removeMany(req: Request, res: Response): Promise<void> {
+  try {
+    const {
+      academicYear,
+      semesterType,
+      studyMode,
+      facultyId: bodyFacultyId,
+      scope,
+    } = req.body as {
+      academicYear?: string;
+      semesterType?: SemesterType;
+      studyMode?: StudyMode;
+      facultyId?: string;
+      scope?: { fieldOfStudyId?: string; specializationId?: string; semester?: number };
+    };
+
+    if (!academicYear || !semesterType || !studyMode) {
+      res.status(400).json({ error: 'Brakujace pola: academicYear, semesterType, studyMode' });
+      return;
+    }
+
+    const facultyId =
+      req.user!.role === 'DEAN_OFFICE' ? await getCallerFacultyId(req.user!.id) : bodyFacultyId;
+    if (!facultyId) {
+      res.status(400).json({
+        error: 'FACULTY_REQUIRED',
+        details: { message: 'Czyszczenie kalendarza wymaga wskazania jednego wydzialu' },
+      });
+      return;
+    }
+
+    const range = await resolveSemesterRange(academicYear, semesterType, studyMode, facultyId);
+    // Granice kalendarza stoja o polnocy, a terminy w poludnie UTC — rozciagamy do
+    // pelnych dob, zeby nie ominac zajec z pierwszego i ostatniego dnia semestru
+    // (identycznie jak generator).
+    const rangeStart = new Date(range.startDate);
+    rangeStart.setUTCHours(0, 0, 0, 0);
+    const rangeEnd = new Date(range.endDate);
+    rangeEnd.setUTCHours(23, 59, 59, 999);
+    const dateRange = { gte: rangeStart, lte: rangeEnd };
+    // Tryb studiow wyprowadzamy z siatki (termin go nie przechowuje) — inaczej czyszczenie
+    // planu niestacjonarnego zabieralo tez stacjonarny z tych samych dat. Jak w generatorze,
+    // wraz z opcjonalnym zawezeniem na kierunek / specjalnosc / semestr. Jeden warunek na
+    // `curriculumEntry`, bo powtorzony klucz relacji nadpisalby poprzedni.
+    const semesterScope = Number.isInteger(scope?.semester) ? scope!.semester : undefined;
+    const where = {
+      facultyId,
+      date: dateRange,
+      curriculumEntry: {
+        ...(semesterScope ? { semester: semesterScope } : {}),
+        curriculumVersion: {
+          is: {
+            studyMode,
+            ...(scope?.specializationId ? { specializationId: scope.specializationId } : {}),
+            ...(scope?.fieldOfStudyId && !scope.specializationId
+              ? { specialization: { is: { fieldOfStudyId: scope.fieldOfStudyId } } }
+              : {}),
+          },
+        },
+      },
+    };
+
+    const doomed = await prisma.scheduleEntry.findMany({
+      where,
+      select: { templateId: true },
+    });
+    const manual = doomed.filter((entry) => entry.templateId === null).length;
+
+    const { count } = await prisma.scheduleEntry.deleteMany({ where });
+
+    res.json({
+      data: {
+        deleted: { total: count, manual },
+        range: {
+          startDate: range.startDate.toISOString(),
+          endDate: range.endDate.toISOString(),
+          source: range.source,
+        },
+      },
+      message:
+        `Wyczyszczono kalendarz wydzialu: usunieto ${count} terminow` +
+        `${manual > 0 ? ` (w tym ${manual} recznych)` : ''}`,
+    });
+  } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Blad serwera' });
   }

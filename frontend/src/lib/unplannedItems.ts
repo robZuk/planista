@@ -19,8 +19,8 @@ export interface UnplannedItem {
   /** Prowadzacy z siatki, jesli wpis go wskazuje — inaczej wybierze go dialog. */
   instructorId: string | null;
   requiredSemesterHours: number;
-  /** Godziny tygodniowo pozostale do rozstawienia; null = brak kalendarza, wiec nie da sie przeliczyc. */
-  remainingWeeklyHours: number | null;
+  /** Grupa jest zastepcza — jej typ nie odpowiada formie zajec (patrz `groupsForClassType`). */
+  groupIsFallback: boolean;
 }
 
 export const UNPLANNED_PREFIX = 'unplanned';
@@ -31,12 +31,44 @@ function weeklyHoursOf(template: ScheduleTemplate): number {
   return template.weekType === 'EVERY' ? span : span / 2;
 }
 
+/**
+ * Formy zajec, dla ktorych uczelnie rzadko zakladaja osobne grupy — seminarium i
+ * projekt prowadzi sie zwykle skladem cwiczeniowym, a w ostatecznosci wykladowym.
+ * Ani dialog wzorca, ani backend nie wymagaja zgodnosci typu grupy z forma zajec,
+ * wiec backlog tez nie moze byc od nich ostrzejszy: bez tej sciezki godziny
+ * seminarium ladowaly w ostrzezeniu "nie da sie zaplanowac", choc rece planisty
+ * zaplanowac je moga.
+ */
+const GROUP_TYPE_FALLBACKS: Partial<Record<ClassType, ClassType[]>> = {
+  SEMINAR: ['EXERCISE', 'LECTURE'],
+  PROJECT: ['EXERCISE', 'LECTURE'],
+};
+
+/** Grupy do obsadzenia danej formy: najpierw pasujace typem, potem zastepcze. */
+function groupsForClassType(
+  groups: StudentGroup[],
+  classType: ClassType,
+): { groups: StudentGroup[]; isFallback: boolean } {
+  // Grupa musi pasowac typem do formy zajec — wykladu nie planuje sie grupie
+  // laboratoryjnej.
+  const exact = groups.filter((group) => group.type === classType);
+  if (exact.length > 0) return { groups: exact, isFallback: false };
+
+  for (const fallback of GROUP_TYPE_FALLBACKS[classType] ?? []) {
+    const substitute = groups.filter((group) => group.type === fallback);
+    if (substitute.length > 0) return { groups: substitute, isFallback: true };
+  }
+
+  return { groups: [], isFallback: false };
+}
+
 export interface UnplannedResult {
   items: UnplannedItem[];
   /**
-   * Formy zajec, ktore siatka przewiduje, ale nie ma dla nich ani jednej grupy.
-   * Bez grupy nie da sie zalozyc wzorca, wiec takie godziny nie trafiaja do `items` —
-   * gdyby przemilczec ten przypadek, pusty backlog klamalby, ze wszystko zaplanowane.
+   * Formy zajec, ktore siatka przewiduje, ale nie ma dla nich ani jednej grupy —
+   * takze zastepczej. Bez grupy nie da sie zalozyc wzorca, wiec takie godziny nie
+   * trafiaja do `items`; gdyby przemilczec ten przypadek, pusty backlog klamalby,
+   * ze wszystko zaplanowane.
    */
   missingGroupTypes: ClassType[];
 }
@@ -62,9 +94,7 @@ export function computeUnplannedItems({
       const required = requiredHours(entry, classType);
       if (required <= 0) continue;
 
-      // Grupa musi pasowac typem do formy zajec — wykladu nie planuje sie grupie
-      // laboratoryjnej.
-      const matchingGroups = groups.filter((item) => item.type === classType);
+      const { groups: matchingGroups, isFallback } = groupsForClassType(groups, classType);
       if (matchingGroups.length === 0) {
         missingGroupTypes.add(classType);
         continue;
@@ -97,7 +127,7 @@ export function computeUnplannedItems({
           group,
           instructorId: entry.instructor?.id ?? null,
           requiredSemesterHours: required,
-          remainingWeeklyHours: remaining,
+          groupIsFallback: isFallback,
         });
       }
     }
@@ -107,15 +137,8 @@ export function computeUnplannedItems({
 }
 
 /**
- * Ile blokow zaproponowac przy upuszczeniu pozycji na siatke. Zaokraglone godziny
- * tygodniowe, przyciete do dopuszczalnej dlugosci zajec; bez kalendarza — jeden blok.
+ * Kazda pozycja z backlogu laduje na siatce jako jeden blok — planista wydluza
+ * zajecia sam, juz na planie. Proponowanie dluzszych blokow z godzin tygodniowych
+ * czesciej przeszkadzalo, niz pomagalo.
  */
-export function suggestedBlockCount(item: UnplannedItem, maxBlocks: number): number {
-  const raw = item.remainingWeeklyHours ?? 1;
-  return Math.min(Math.max(Math.round(raw), 1), maxBlocks);
-}
-
-/** Godziny bez zbednego ".0" — 2 zamiast 2.0, ale 1.3 zostaje 1.3. */
-export function formatHours(value: number): string {
-  return Number.isInteger(value) ? String(value) : value.toFixed(1);
-}
+export const UNPLANNED_DROP_BLOCKS = 1;

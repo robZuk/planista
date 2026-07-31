@@ -7,7 +7,7 @@ import {
   type DragOverEvent,
   type DragStartEvent,
 } from '@dnd-kit/core';
-import { CalendarDays, Info, Plus } from 'lucide-react';
+import { CalendarDays, Info, Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
@@ -44,11 +44,13 @@ import {
   CLASS_FULL_LABELS,
   CLASS_LABELS,
   CLASS_TYPES,
-  MAX_TEMPLATE_BLOCKS,
   WEEK_TYPE_BADGE,
+  WEEK_VIEW_LABELS,
   daysForMode,
+  matchesWeekView,
+  type WeekView,
 } from '@/lib/scheduleDisplay';
-import { computeUnplannedItems, suggestedBlockCount } from '@/lib/unplannedItems';
+import { UNPLANNED_DROP_BLOCKS, computeUnplannedItems } from '@/lib/unplannedItems';
 import {
   DAY_TO_NUM,
   getGroupFamilyIds,
@@ -57,11 +59,13 @@ import {
   weekTypesConflict,
 } from '@/lib/scheduleConflicts';
 import { STUDY_MODES, STUDY_MODE_LABELS } from '@/lib/labels';
+import type { PlanScope } from '@/lib/planScope';
 import { semesterTypeOf } from '@/lib/semester';
 import { useAcademicYearStore } from '@/store/academicYearStore';
 import { useFacultyFilterStore } from '@/store/facultyStore';
 import { useFieldFilterStore } from '@/store/fieldFilterStore';
 import { useAuthStore } from '@/store/authStore';
+import { ClearPlanDialog } from './ClearPlanDialog';
 import { TemplateDialog, type TemplatePrefill } from './TemplateDialog';
 import { UnplannedPanel } from './UnplannedPanel';
 import type { DayOfWeek, ScheduleTemplate, StudyMode, WeekType } from '@/types';
@@ -70,6 +74,8 @@ export default function TemplateTab() {
   const queryClient = useQueryClient();
   const role = useAuthStore((s) => s.user?.role);
   const canEdit = role === 'ADMIN' || role === 'DEAN_OFFICE' || role === 'INSTRUCTOR';
+  // Kasowanie calego wzorca/kalendarza to ta sama waga co generowanie — tylko planisci.
+  const canClearPlan = role === 'ADMIN' || role === 'DEAN_OFFICE';
   const { academicYear, semesterType } = useAcademicYearStore();
   const facultyId = useFacultyFilterStore((s) => s.facultyId);
   const fieldOfStudyId = useFieldFilterStore((s) => s.fieldOfStudyId);
@@ -83,6 +89,7 @@ export default function TemplateTab() {
   const [semester, setSemester] = useState<number | 'all' | null>(null);
 
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [clearOpen, setClearOpen] = useState(false);
   const [editing, setEditing] = useState<ScheduleTemplate | null>(null);
   const [prefill, setPrefill] = useState<TemplatePrefill | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -90,6 +97,7 @@ export default function TemplateTab() {
   const [roomFilter, setRoomFilter] = useState('all');
   const [instructorFilter, setInstructorFilter] = useState('all');
   const [classTypeFilter, setClassTypeFilter] = useState('all');
+  const [weekView, setWeekView] = useState<WeekView>('all');
 
   const { data: versions } = useQuery({
     queryKey: ['curriculum-versions'],
@@ -117,6 +125,17 @@ export default function TemplateTab() {
 
   const version = availableVersions.find((item) => item.id === versionId);
   const allSpecializations = versionId === 'all';
+
+  // Zakres dla operacji na planie (czyszczenie) — dokladnie to, co widac w pasku filtrow.
+  // `semester === null` znaczy "brak dostepnych semestrow", wiec traktujemy jak brak zawezenia.
+  const planScope: PlanScope = useMemo(
+    () => ({
+      fieldOfStudyId,
+      specializationId: version?.specializationId ?? 'all',
+      semester: typeof semester === 'number' ? semester : 'all',
+    }),
+    [fieldOfStudyId, version, semester],
+  );
 
   // Semestry do wyboru: dla konkretnej siatki jej wlasne, dla "Wszystkie" — suma z
   // wszystkich dostepnych siatek (rozne moga miec inna liczbe/uklad semestrow).
@@ -201,17 +220,16 @@ export default function TemplateTab() {
   // Kalendarz semestru daje `teachingWeeks` — przelicznik godzin semestralnych z siatki
   // na tygodniowe, ktorymi operuje wzorzec. Bez niego backlog dziala w trybie zgrubnym.
   const { data: calendars } = useQuery({ queryKey: ['semester-calendars'], queryFn: fetchCalendars });
-  // Kalendarz wydzialowy ma pierwszenstwo nad ogolnouczelnianym — jak na backendzie.
-  const matchingCalendars = calendars?.filter(
-    (calendar) =>
-      calendar.academicYear === academicYear &&
-      calendar.semesterType === semesterType &&
-      calendar.studyMode === studyMode,
-  );
+  // Kalendarz nalezy do wydzialu, wiec przy filtrze "wszystkie wydzialy" nie ma jednego
+  // wlasciwego zakresu — backlog schodzi wtedy do trybu zgrubnego (jak przy braku wpisu).
   const teachingWeeks =
-    (
-      matchingCalendars?.find((c) => facultyId !== 'all' && c.facultyId === facultyId) ??
-      matchingCalendars?.find((c) => c.facultyId === null)
+    calendars?.find(
+      (calendar) =>
+        calendar.academicYear === academicYear &&
+        calendar.semesterType === semesterType &&
+        calendar.studyMode === studyMode &&
+        facultyId !== 'all' &&
+        calendar.facultyId === facultyId,
     )?.teachingWeeks ?? null;
 
   const rooms = useMemo(
@@ -278,9 +296,10 @@ export default function TemplateTab() {
         (template) =>
           (roomFilter === 'all' || template.room.id === roomFilter) &&
           (instructorFilter === 'all' || template.instructor.id === instructorFilter) &&
-          (classTypeFilter === 'all' || template.classType === classTypeFilter),
+          (classTypeFilter === 'all' || template.classType === classTypeFilter) &&
+          matchesWeekView(template.weekType, weekView),
       ) ?? [],
-    [templates, roomFilter, instructorFilter, classTypeFilter],
+    [templates, roomFilter, instructorFilter, classTypeFilter, weekView],
   );
 
   /**
@@ -308,7 +327,7 @@ export default function TemplateTab() {
     if (item) {
       return {
         excludeTemplateId: null,
-        blockCount: suggestedBlockCount(item, MAX_TEMPLATE_BLOCKS),
+        blockCount: UNPLANNED_DROP_BLOCKS,
         // Sale wskaze dopiero dialog, wiec kolizji sal na tym etapie nie sprawdzamy.
         roomId: null,
         instructorId: item.instructorId,
@@ -329,7 +348,16 @@ export default function TemplateTab() {
     const familyIds = dragSubject.groupId
       ? getGroupFamilyIds(dragSubject.groupId, groups ?? [])
       : [];
-    const others = (allTemplates ?? []).filter((t) => t.id !== dragSubject.excludeTemplateId);
+    // Tylko wzorce tej samej pory roku moga cokolwiek zablokowac — zajecia zimowe i
+    // letnie nie odbywaja sie jednoczesnie, wiec dziela sale i grupy bez kolizji.
+    // Pore liczymy z naboru KAZDEGO wzorca osobno (semestr 1 bywa letni), tak samo
+    // jak backend w sameSemesterType.
+    const others = (allTemplates ?? []).filter(
+      (t) =>
+        t.id !== dragSubject.excludeTemplateId &&
+        semesterTypeOf(t.curriculumEntry.curriculumVersion.startSemesterType, t.semester) ===
+          semesterType,
+    );
 
     const map = new Map<string, boolean>();
     for (const day of days) {
@@ -357,7 +385,7 @@ export default function TemplateTab() {
       }
     }
     return map;
-  }, [dragSubject, allTemplates, blocks, days, groups, studyMode]);
+  }, [dragSubject, allTemplates, blocks, days, groups, studyMode, semesterType]);
 
   const moveMutation = useMutation({
     mutationFn: ({
@@ -424,7 +452,7 @@ export default function TemplateTab() {
         classType: unplanned.classType,
         studentGroupId: unplanned.group.id,
         ...(unplanned.instructorId ? { instructorId: unplanned.instructorId } : {}),
-        blockCount: suggestedBlockCount(unplanned, MAX_TEMPLATE_BLOCKS),
+        blockCount: UNPLANNED_DROP_BLOCKS,
       });
       setDialogOpen(true);
       return;
@@ -534,13 +562,22 @@ export default function TemplateTab() {
           </SelectContent>
         </Select>
 
-        {/* Dodawanie wymaga konkretnej siatki i semestru — dialog czerpie z nich liste przedmiotow. */}
-        {canEdit && !allSpecializations && typeof semester === 'number' && (
-          <Button className="ml-auto" onClick={() => openCreate(days[0]!.key, blocks[0]!.id)}>
-            <Plus />
-            Dodaj zajecia
-          </Button>
-        )}
+        <div className="ml-auto flex gap-2">
+          {/* Kasowanie idzie po calym wzorcu wydzialu, wiec nie zalezy od wybranej siatki. */}
+          {canClearPlan && (
+            <Button variant="outline" onClick={() => setClearOpen(true)}>
+              <Trash2 />
+              Usun plan
+            </Button>
+          )}
+          {/* Dodawanie wymaga konkretnej siatki i semestru — dialog czerpie z nich liste przedmiotow. */}
+          {canEdit && !allSpecializations && typeof semester === 'number' && (
+            <Button onClick={() => openCreate(days[0]!.key, blocks[0]!.id)}>
+              <Plus />
+              Dodaj zajecia
+            </Button>
+          )}
+        </div>
       </div>
 
       {/* Niezalezne filtry — zawezaja co widac na siatce, nie zmieniaja kontekstu (rok/tryb/siatka). */}
@@ -582,6 +619,19 @@ export default function TemplateTab() {
             {CLASS_TYPES.map((type) => (
               <SelectItem key={type} value={type}>
                 {CLASS_FULL_LABELS[type]}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+
+        <Select value={weekView} onValueChange={(value) => setWeekView(value as WeekView)}>
+          <SelectTrigger className="w-56" aria-label="Tydzien rotacji">
+            <SelectValue placeholder="Tydzien" />
+          </SelectTrigger>
+          <SelectContent>
+            {(Object.keys(WEEK_VIEW_LABELS) as WeekView[]).map((view) => (
+              <SelectItem key={view} value={view}>
+                {WEEK_VIEW_LABELS[view]}
               </SelectItem>
             ))}
           </SelectContent>
@@ -735,6 +785,17 @@ export default function TemplateTab() {
           )}
         </>
       )}
+
+      <ClearPlanDialog
+        open={clearOpen}
+        onOpenChange={setClearOpen}
+        academicYear={academicYear}
+        semesterType={semesterType}
+        studyMode={studyMode}
+        facultyId={facultyId}
+        scope={planScope}
+        defaultTarget="templates"
+      />
 
       <TemplateDialog
         open={dialogOpen}

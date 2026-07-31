@@ -197,7 +197,12 @@ export interface ScheduleTemplate {
   curriculumEntryId: string;
   /** Wydzial wyprowadzany z siatki po stronie serwera — niezmienny. */
   facultyId: string;
-  curriculumEntry: { id: string; subject: { id: string; name: string } };
+  curriculumEntry: {
+    id: string;
+    subject: { id: string; name: string };
+    /** Nabor programu — z nim i `semester` liczy sie pora roku wzorca (semesterTypeOf). */
+    curriculumVersion: { startSemesterType: SemesterType };
+  };
   classType: ClassType;
   room: RoomRef;
   instructor: InstructorRef & { id: string };
@@ -227,7 +232,7 @@ export interface ScheduleEntry {
     id: string;
     semester: number;
     subject: { id: string; name: string };
-    curriculumVersion: { specializationId: string };
+    curriculumVersion: { specializationId: string; studyMode: StudyMode };
   };
   template: { id: string; dayOfWeek: DayOfWeek; weekType: WeekType; studyMode: StudyMode } | null;
   startBlock: BlockRef;
@@ -242,13 +247,17 @@ export interface SemesterCalendar {
   startDate: string;
   endDate: string;
   teachingWeeks: number;
-  /** null = kalendarz ogolnouczelniany; wydzialowy ma nad nim pierwszenstwo. */
-  facultyId: string | null;
-  faculty: { id: string; name: string; shortName: string } | null;
+  /** Kalendarz zawsze nalezy do wydzialu — wariant ogolnouczelniany nie istnieje. */
+  facultyId: string;
+  faculty: { id: string; name: string; shortName: string };
+  /** Wzorce tygodnia, ktore rozpisza sie z tego zakresu dat (liczone przez serwer). */
+  templateCount: number;
+  /** Terminy juz stojace w tym zakresie — tyle skasuje nadpisanie albo czyszczenie planu. */
+  entryCount: number;
 }
 
 /** Skad wziely sie daty semestru uzyte przy generowaniu. */
-export type SemesterRangeSource = 'FACULTY' | 'GLOBAL' | 'DERIVED';
+export type SemesterRangeSource = 'FACULTY' | 'DERIVED';
 
 export interface PublicHoliday {
   id: string;

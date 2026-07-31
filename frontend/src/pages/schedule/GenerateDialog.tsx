@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { CalendarCheck, Sparkles, TriangleAlert } from 'lucide-react';
 import { toast } from 'sonner';
@@ -30,11 +30,20 @@ import {
   generateSemesterEntries,
   type GenerateResult,
 } from '@/api/schedule';
+import { fetchVersions } from '@/api/curriculum';
 import { fetchFaculties } from '@/api/faculties';
 import { useAuthStore } from '@/store/authStore';
 import { getScheduleErrorMessage } from '@/lib/scheduleErrors';
 import { CLASS_FULL_LABELS } from '@/lib/scheduleDisplay';
-import { SEMESTER_TYPE_LABELS } from '@/lib/semester';
+import { STUDY_MODE_LABELS } from '@/lib/labels';
+import { SEMESTER_TYPE_LABELS, semesterTypeOf } from '@/lib/semester';
+import {
+  describeScope,
+  isScoped,
+  scopePayload,
+  templateScopeParams,
+  type PlanScope,
+} from '@/lib/planScope';
 import { formatDateLong } from '@/lib/scheduleDates';
 import type { SemesterType, StudyMode } from '@/types';
 
@@ -46,6 +55,8 @@ interface Props {
   studyMode: StudyMode;
   /** Kontekst wydzialu z widoku: 'all' = wszystkie. Dla dziekanatu i tak wymuszamy jego wlasny. */
   facultyId: string;
+  /** Kierunek / specjalnosc / semestr z paska filtrow widoku — patrz lib/planScope.ts. */
+  scope: PlanScope;
 }
 
 /**
@@ -63,12 +74,15 @@ export function GenerateDialog({
   semesterType,
   studyMode,
   facultyId,
+  scope,
 }: Props) {
   const queryClient = useQueryClient();
   const me = useAuthStore((s) => s.user);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [pickedFacultyId, setPickedFacultyId] = useState('');
   const [result, setResult] = useState<GenerateResult | null>(null);
+
+  const { fieldOfStudyId, specializationId, semester } = scope;
 
   // Dziekanat generuje wylacznie swoj wydzial. Admin z filtrem "wszystkie" musi
   // wskazac jeden — nadpisanie kalendarzy calej uczelni jednym klikiem jest za szerokie.
@@ -91,11 +105,91 @@ export function GenerateDialog({
     ? (faculties?.find((f) => f.id === effectiveFacultyId)?.name ?? null)
     : null;
 
-  const { data: templates, isPending } = useQuery({
-    queryKey: ['templates', 'all', academicYear, studyMode, effectiveFacultyId ?? 'none'],
-    queryFn: () => fetchTemplates({ academicYear, studyMode, facultyId: effectiveFacultyId! }),
+  // Kierunek i specjalnosc zawezamy po stronie serwera (wzorzec nie niesie tych pol),
+  // pore semestru i numer — po stronie klienta.
+  const curriculumFilter = templateScopeParams(scope);
+
+  const { data: allTemplates, isPending } = useQuery({
+    queryKey: [
+      'templates',
+      'all',
+      academicYear,
+      studyMode,
+      effectiveFacultyId ?? 'none',
+      fieldOfStudyId,
+      specializationId,
+    ],
+    queryFn: () =>
+      fetchTemplates({
+        academicYear,
+        studyMode,
+        facultyId: effectiveFacultyId!,
+        ...curriculumFilter,
+      }),
     enabled: open && !deanNoFaculty && !!effectiveFacultyId,
   });
+
+  // Siatki tego roku, trybu i wydzialu — z nich bierzemy nazwy kierunkow i specjalnosci.
+  const { data: versions } = useQuery({
+    queryKey: ['curriculum-versions'],
+    queryFn: fetchVersions,
+    enabled: open,
+  });
+  const scopeVersions = useMemo(
+    () =>
+      versions?.filter(
+        (version) =>
+          version.academicYear === academicYear &&
+          version.studyMode === studyMode &&
+          (!effectiveFacultyId ||
+            version.specialization?.fieldOfStudy?.faculty?.id === effectiveFacultyId),
+      ) ?? [],
+    [versions, academicYear, studyMode, effectiveFacultyId],
+  );
+
+  const fields = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const version of scopeVersions) {
+      const field = version.specialization?.fieldOfStudy;
+      if (field) map.set(field.id, field.name);
+    }
+    return [...map].map(([id, name]) => ({ id, name }));
+  }, [scopeVersions]);
+
+  const specializations = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const version of scopeVersions) {
+      const spec = version.specialization;
+      if (!spec) continue;
+      if (fieldOfStudyId !== 'all' && spec.fieldOfStudyId !== fieldOfStudyId) continue;
+      map.set(spec.id, spec.name);
+    }
+    return [...map].map(([id, name]) => ({ id, name }));
+  }, [scopeVersions, fieldOfStudyId]);
+
+  // API filtruje po roku i trybie, ale nie po PORZE semestru — a rozpisujemy na zakres dat
+  // jednego semestru. Bez tego wzorce letnie (np. sem. 2) trafialy do listy zimowej i byly
+  // domyslnie zaznaczone, wiec generator rozpisywal je na daty zimy. Pore liczymy z naboru
+  // kazdej siatki osobno, bo semestr 1 bywa letni — tak samo jak ClearPlanDialog.
+  const inSemesterType = useMemo(
+    () =>
+      allTemplates?.filter(
+        (template) =>
+          semesterTypeOf(
+            template.curriculumEntry.curriculumVersion.startSemesterType,
+            template.semester,
+          ) === semesterType,
+      ),
+    [allTemplates, semesterType],
+  );
+
+  const templates = useMemo(
+    () =>
+      semester === 'all'
+        ? inSemesterType
+        : inSemesterType?.filter((template) => template.semester === semester),
+    [inSemesterType, semester],
+  );
 
   const { data: calendars } = useQuery({
     queryKey: ['semester-calendars'],
@@ -103,29 +197,56 @@ export function GenerateDialog({
     enabled: open,
   });
 
-  // Kalendarz wydzialowy ma pierwszenstwo nad ogolnouczelnianym (lustro
+  // Kalendarz nalezy do wydzialu; jego brak oznacza daty wyliczone z roku (lustro
   // resolveSemesterRange z backendu).
-  const matching = calendars?.filter(
+  const calendar = calendars?.find(
     (item) =>
       item.academicYear === academicYear &&
       item.semesterType === semesterType &&
-      item.studyMode === studyMode,
+      item.studyMode === studyMode &&
+      item.facultyId === effectiveFacultyId,
   );
-  const calendar =
-    matching?.find((item) => item.facultyId === effectiveFacultyId) ??
-    matching?.find((item) => item.facultyId === null);
 
   // Ile terminow zniknie. Liczymy dopiero, gdy znamy wydzial i zakres dat.
   const from = calendar?.startDate.slice(0, 10);
   const to = calendar?.endDate.slice(0, 10);
-  const { data: doomed } = useQuery({
+  const { data: entriesInRange } = useQuery({
     queryKey: ['schedule-entries', 'doomed', from, to, effectiveFacultyId],
     queryFn: () => fetchEntries({ from, to, facultyId: effectiveFacultyId! }),
     enabled: open && !!effectiveFacultyId && !!from && !!to && !result,
   });
+  // Specjalnosc -> kierunek, zeby podglad umial odwzorowac zawezenie po kierunku
+  // (termin niesie tylko specializationId).
+  const fieldBySpecialization = useMemo(
+    () =>
+      new Map(
+        scopeVersions
+          .filter((version) => version.specialization)
+          .map((version) => [version.specializationId, version.specialization!.fieldOfStudyId]),
+      ),
+    [scopeVersions],
+  );
+
+  // Lustro zakresu kasowania z generatora: tryb studiow + to samo zawezenie, ktore idzie
+  // jako `scope`. Terminy poza zakresem zostaja na miejscu i nie licza sie do podgladu.
+  const doomed = entriesInRange?.filter((entry) => {
+    const version = entry.curriculumEntry.curriculumVersion;
+    if (version.studyMode !== studyMode) return false;
+    if (specializationId !== 'all' && version.specializationId !== specializationId) return false;
+    if (
+      specializationId === 'all' &&
+      fieldOfStudyId !== 'all' &&
+      fieldBySpecialization.get(version.specializationId) !== fieldOfStudyId
+    ) {
+      return false;
+    }
+    if (semester !== 'all' && entry.curriculumEntry.semester !== semester) return false;
+    return true;
+  });
   const doomedManual = doomed?.filter((entry) => entry.template === null).length ?? 0;
 
-  // Po otwarciu zaznaczamy wszystko — typowy scenariusz to "rozpisz caly semestr".
+  // Po otwarciu (i po kazdej zmianie zawezenia) zaznaczamy wszystko z zakresu — typowy
+  // scenariusz to "rozpisz cale to, co widze", a checkboxy sluza do wyjatkow.
   useEffect(() => {
     if (open && templates) setSelected(new Set(templates.map((template) => template.id)));
     if (!open) {
@@ -142,6 +263,9 @@ export function GenerateDialog({
         semesterType,
         studyMode,
         facultyId: effectiveFacultyId!,
+        // Ten sam zakres wyznacza kasowanie po stronie serwera — bez niego rozpisanie
+        // jednego semestru skasowaloby plan calego wydzialu.
+        scope: scopePayload(scope),
       }),
     onSuccess: (response) => {
       setResult(response.data);
@@ -161,6 +285,14 @@ export function GenerateDialog({
     });
   };
 
+  // Opis zakresu mowi wprost, co wchodzi pod noz — przy zawezeniu "caly kalendarz
+  // wydzialu" byloby nieprawda.
+  const scoped = isScoped(scope);
+  const scopeLabel = describeScope(scope, {
+    fieldName: fields.find((f) => f.id === fieldOfStudyId)?.name,
+    specializationName: specializations.find((s) => s.id === specializationId)?.name,
+  });
+
   const allSelected = !!templates && templates.length > 0 && selected.size === templates.length;
   const canGenerate = selected.size > 0 && !!effectiveFacultyId && !deanNoFaculty;
 
@@ -170,8 +302,9 @@ export function GenerateDialog({
         <DialogHeader>
           <DialogTitle>Generuj terminy semestru</DialogTitle>
           <DialogDescription>
-            {SEMESTER_TYPE_LABELS[semesterType]} {academicYear} — wybrane wzorce zostana rozpisane
-            na konkretne daty.
+            {SEMESTER_TYPE_LABELS[semesterType]} {academicYear} ·{' '}
+            {STUDY_MODE_LABELS[studyMode].toLowerCase()} — wybrane wzorce zostana rozpisane na
+            konkretne daty.
           </DialogDescription>
         </DialogHeader>
 
@@ -240,27 +373,49 @@ export function GenerateDialog({
             {calendar ? (
               <p className="text-sm text-muted-foreground">
                 Zakres semestru: {formatDateLong(calendar.startDate)} –{' '}
-                {formatDateLong(calendar.endDate)} ({calendar.teachingWeeks} tygodni)
-                {calendar.facultyId ? ' — kalendarz wydzialowy.' : ' — kalendarz ogolnouczelniany.'}
+                {formatDateLong(calendar.endDate)} ({calendar.teachingWeeks} tygodni) — kalendarz
+                wydzialu.
               </p>
             ) : (
-              <Alert>
-                <Sparkles />
-                <AlertTitle>Brak zapisanego kalendarza semestru</AlertTitle>
-                <AlertDescription>
-                  Backend uzyje domyslnego zakresu dat dla tego roku i semestru.
-                </AlertDescription>
-              </Alert>
+              // Kalendarz szukamy po wydziale, wiec przed jego wskazaniem po prostu go nie
+              // znamy — "brak kalendarza" byloby wtedy falszywym alarmem.
+              effectiveFacultyId && (
+                <Alert>
+                  <Sparkles />
+                  <AlertTitle>Brak zapisanego kalendarza semestru</AlertTitle>
+                  <AlertDescription>
+                    Backend uzyje domyslnego zakresu dat dla tego roku i semestru.
+                  </AlertDescription>
+                </Alert>
+              )
             )}
+
+            {/* Zakres bierzemy z paska filtrow widoku — okno go nie dubluje. Nie jest to
+                filtr listy: ta sama trojka wyznacza, co zostanie skasowane przed rozpisaniem. */}
+            <p className="text-sm">
+              <span className="text-muted-foreground">Zakres: </span>
+              <span className="font-medium">{scopeLabel}</span>
+              {!scoped && (
+                <span className="text-muted-foreground">
+                  {' '}
+                  — zawezisz go filtrami kierunku, specjalnosci i semestru nad planem.
+                </span>
+              )}
+            </p>
 
             {effectiveFacultyId && (doomed?.length ?? 0) > 0 && (
               <Alert variant="destructive">
                 <TriangleAlert />
-                <AlertTitle>Nadpisze caly kalendarz tego wydzialu</AlertTitle>
+                <AlertTitle>
+                  Nadpisze {scoped ? scopeLabel : 'kalendarz tego wydzialu'} (
+                  {STUDY_MODE_LABELS[studyMode].toLowerCase()})
+                </AlertTitle>
                 <AlertDescription>
                   W zakresie semestru zniknie {doomed!.length} istniejacych terminow
                   {doomedManual > 0 ? `, w tym ${doomedManual} dodanych recznie` : ''}. Reczne
-                  przeniesienia i odwolania nie przetrwaja tej operacji.
+                  przeniesienia i odwolania nie przetrwaja tej operacji. Plan drugiego trybu
+                  studiow{scoped ? ' oraz to, co poza wybranym zakresem,' : ''} zostaje
+                  nietkniety.
                 </AlertDescription>
               </Alert>
             )}
@@ -273,7 +428,9 @@ export function GenerateDialog({
               <p className="text-sm text-muted-foreground">Wczytuje wzorce…</p>
             ) : templates?.length === 0 ? (
               <p className="rounded-lg border border-dashed px-4 py-6 text-center text-sm text-muted-foreground">
-                Nie ma zadnych wzorcow dla tego roku i trybu — nie ma czego rozpisywac.
+                {scoped
+                  ? 'Brak wzorcow w wybranym zakresie — poszerz filtry nad planem albo ulozy wzorzec tygodnia.'
+                  : 'Nie ma zadnych wzorcow dla tego roku, semestru i trybu — nie ma czego rozpisywac.'}
               </p>
             ) : (
               <>

@@ -64,6 +64,27 @@ export const WEEK_TYPE_BADGE: Record<WeekType, string> = {
   EVEN: 'Tydzien B',
 };
 
+/** Filtr widoku siatki: ktory tydzien rotacji ogladamy. 'all' = bez zawezania. */
+export type WeekView = 'all' | 'ODD' | 'EVEN';
+
+export const WEEK_VIEW_LABELS: Record<WeekView, string> = {
+  all: 'Wszystkie tygodnie',
+  ODD: 'Tydzien A (nieparzysty)',
+  EVEN: 'Tydzien B (parzysty)',
+};
+
+/**
+ * Czy wzorzec pojawia sie w ogladanym tygodniu rotacji.
+ *
+ * Zajecia "co tydzien" wchodza do OBU tygodni — bez tego podglad tygodnia A klamalby,
+ * pokazujac wylacznie zajecia co drugi tydzien i gubiac wieksza czesc planu. Efekt
+ * uboczny, dla ktorego filtr powstal: para A/B stojaca w tym samym slocie rysuje sie
+ * na siatce jeden blok na drugim, a po wybraniu tygodnia zostaje z niej jeden.
+ */
+export function matchesWeekView(weekType: WeekType, view: WeekView): boolean {
+  return view === 'all' || weekType === 'EVERY' || weekType === view;
+}
+
 export const STATUS_LABELS: Record<EntryStatus, string> = {
   SCHEDULED: 'Zaplanowane',
   CANCELLED: 'Odwolane',
@@ -99,7 +120,7 @@ export function daysForMode(studyMode: StudyMode): { key: DayOfWeek; label: stri
  */
 export const ROOM_TYPES_FOR_CLASS: Record<ClassType, RoomType[]> = {
   LECTURE: ['LECTURE', 'EXERCISE'],
-  EXERCISE: ['EXERCISE', 'LECTURE'],
+  EXERCISE: ['EXERCISE', 'LECTURE', 'SPORTS'],
   LAB: ['LAB', 'COMPUTER_LAB'],
   PROJECT: ['EXERCISE', 'COMPUTER_LAB', 'SEMINAR'],
   SEMINAR: ['SEMINAR', 'EXERCISE'],

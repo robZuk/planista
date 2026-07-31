@@ -66,6 +66,8 @@ async function main() {
   await prisma.faculty.create({
     data: { name: 'Wydzial Zarzadzania i Nauk o Jakosci', shortName: 'WZNJ' },
   });
+  // Kalendarze semestru zakladamy nizej dla kazdego wydzialu osobno.
+  const allFaculties = await prisma.faculty.findMany({ select: { id: true } });
 
   const edst = await prisma.fieldOfStudy.create({
     data: {
@@ -172,26 +174,29 @@ async function main() {
   for (const year of ACADEMIC_YEARS) {
     const startYear = Number(year.split('/')[0]);
 
-    await prisma.semesterCalendar.create({
-      data: {
-        academicYear: year,
-        semesterType: 'WINTER',
-        studyMode: 'FULL_TIME',
-        startDate: new Date(`${startYear}-10-01`),
-        endDate: new Date(`${startYear + 1}-02-02`),
-        teachingWeeks: 15,
-      },
-    });
-
-    await prisma.semesterCalendar.create({
-      data: {
-        academicYear: year,
-        semesterType: 'SUMMER',
-        studyMode: 'FULL_TIME',
-        startDate: new Date(`${startYear + 1}-02-17`),
-        endDate: new Date(`${startYear + 1}-06-22`),
-        teachingWeeks: 15,
-      },
+    // Kalendarz nalezy do wydzialu — wspolne daty uczelni to wiersz na kazdy wydzial,
+    // dokladnie tak, jak zaklada je UI opcja "wszystkie wydzialy".
+    await prisma.semesterCalendar.createMany({
+      data: allFaculties.flatMap((faculty) => [
+        {
+          academicYear: year,
+          semesterType: 'WINTER' as const,
+          studyMode: 'FULL_TIME' as const,
+          facultyId: faculty.id,
+          startDate: new Date(`${startYear}-10-01`),
+          endDate: new Date(`${startYear + 1}-02-02`),
+          teachingWeeks: 15,
+        },
+        {
+          academicYear: year,
+          semesterType: 'SUMMER' as const,
+          studyMode: 'FULL_TIME' as const,
+          facultyId: faculty.id,
+          startDate: new Date(`${startYear + 1}-02-17`),
+          endDate: new Date(`${startYear + 1}-06-22`),
+          teachingWeeks: 15,
+        },
+      ]),
     });
 
     const version = await prisma.curriculumVersion.create({

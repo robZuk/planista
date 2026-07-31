@@ -3,7 +3,7 @@ import { prisma } from './prisma';
 import { deriveCalendarDates } from './scheduleTime';
 
 /** Skad wzielismy zakres dat semestru — pokazywane w UI przed generowaniem. */
-export type SemesterRangeSource = 'FACULTY' | 'GLOBAL' | 'DERIVED';
+export type SemesterRangeSource = 'FACULTY' | 'DERIVED';
 
 export interface SemesterRange {
   startDate: Date;
@@ -13,28 +13,30 @@ export interface SemesterRange {
 }
 
 /**
- * Zakres dat semestru dla wydzialu. Kalendarz wydzialowy ma pierwszenstwo,
- * ogolnouczelniany (facultyId = null) jest fallbackiem, a gdy nie ma zadnego —
- * wracamy do dat wyliczonych z roku akademickiego.
+ * Zakres dat semestru dla wydzialu. Kalendarz zawsze nalezy do wydzialu, wiec albo
+ * wydzial ma swoj wpis, albo wracamy do dat wyliczonych z roku akademickiego.
+ *
+ * Wczesniej byl tu jeszcze poziom posredni — kalendarz ogolnouczelniany (facultyId
+ * = null) jako fallback. Zniknal razem z samym wariantem: definiowal zasieg przez
+ * brak i psul unique na kluczu kalendarza. Wspolne daty dla calej uczelni zaklada
+ * sie teraz hurtem, po wierszu na wydzial.
  */
 export async function resolveSemesterRange(
   academicYear: string,
   semesterType: SemesterType,
   studyMode: StudyMode,
-  facultyId: string | null,
+  facultyId: string,
 ): Promise<SemesterRange> {
-  const base = { academicYear, semesterType, studyMode };
-
-  if (facultyId) {
-    const own = await prisma.semesterCalendar.findFirst({ where: { ...base, facultyId } });
-    if (own) {
-      return { startDate: own.startDate, endDate: own.endDate, teachingWeeks: own.teachingWeeks, source: 'FACULTY' };
-    }
-  }
-
-  const global = await prisma.semesterCalendar.findFirst({ where: { ...base, facultyId: null } });
-  if (global) {
-    return { startDate: global.startDate, endDate: global.endDate, teachingWeeks: global.teachingWeeks, source: 'GLOBAL' };
+  const own = await prisma.semesterCalendar.findFirst({
+    where: { academicYear, semesterType, studyMode, facultyId },
+  });
+  if (own) {
+    return {
+      startDate: own.startDate,
+      endDate: own.endDate,
+      teachingWeeks: own.teachingWeeks,
+      source: 'FACULTY',
+    };
   }
 
   const derived = deriveCalendarDates(academicYear, semesterType);

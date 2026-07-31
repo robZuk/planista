@@ -33,7 +33,7 @@ Ustawiane raz na cykl, potem stabilne. Prawie wszystkie noszą pole `academicYea
 | `CurriculumVersion` | co rok akademicki | wersjonowane — nowa wersja na rocznik |
 | `CurriculumEntry` | przy układaniu siatki | dzieci wersji |
 | `StudentGroup` | co rok akademicki | patrz §4 |
-| `SemesterCalendar` | raz na semestr | ramy dat; `facultyId = null` → ogólnouczelniany, wydziałowy ma pierwszeństwo |
+| `SemesterCalendar` | raz na semestr | ramy dat; zawsze wydziałowy — po wierszu na wydział |
 | `PublicHoliday` | raz na rok | dane kalendarzowe |
 | `Instructor` | wolno (zatrudnienia/odejścia) | „master data" |
 
@@ -173,9 +173,9 @@ Obie warstwy są **rozdzielone**, a jednostką organizacyjną planu jest **wydzi
 serwera i dla wzorca niezmienne).
 
 ```
-WZORZEC TYGODNIA (wydział)  ──[GENEROWANIE SEMESTRU]──▶  KALENDARZ (wydział)
-   edycja: lokalna              pełne nadpisanie             edycja: lokalna
-   nie rusza kalendarza          zakresu wydziału            nie rusza wzorca
+WZORZEC TYGODNIA (wydział+tryb) ─[GENEROWANIE SEMESTRU]─▶ KALENDARZ (wydział+tryb)
+   edycja: lokalna                  pełne nadpisanie           edycja: lokalna
+   nie rusza kalendarza            zakresu wydz.+trybu         nie rusza wzorca
 ```
 
 - **Edycja wzorca nie zmienia kalendarza.** Usunięcie wzorca też go nie kasuje — terminy tracą
@@ -185,11 +185,42 @@ WZORZEC TYGODNIA (wydział)  ──[GENEROWANIE SEMESTRU]──▶  KALENDARZ (w
 - **Generowanie semestru nadpisuje kalendarz wydziału w całości** — kasuje wszystkie jego terminy
   w zakresie dat, łącznie z dodanymi ręcznie (odrobienia), odwołanymi i przeniesionymi, po czym
   rozpisuje plan od zera. Zawsze dotyczy dokładnie jednego wydziału, także dla admina.
+- **Nadpisanie zawęża się do jednego trybu studiów.** Stacjonarne i niestacjonarne stoją na tych
+  samych datach (mają tylko osobne `SemesterCalendar`), więc bez tego zawężenia rozpisanie
+  jednego trybu kasowało plan drugiego — i nie odtwarzało go, bo generator rozpisuje wyłącznie
+  wzorce wybranego trybu. `ScheduleEntry` nie przechowuje trybu, więc bierzemy go z siatki:
+  `curriculumEntry → curriculumVersion.studyMode`. Ten sam zakres obowiązuje przy kasowaniu
+  kalendarza i przy sprawdzaniu, czy wolno skrócić `SemesterCalendar`.
+  Konsekwencja dla generatora: plan drugiego trybu tego wydziału **przeżywa** nadpisanie, więc
+  wchodzi do zajętości sal i prowadzących na równi z terminami innych wydziałów.
+- **Kalendarz semestru zawsze należy do wydziału — decyzja.** Wariant ogólnouczelniany
+  (`facultyId = null`, fallback dla wydziałów bez własnego) został usunięty. Definiował zasięg
+  przez brak — dodanie wpisu jednemu wydziałowi po cichu zmieniało znaczenie wiersza globalnego —
+  a przy okazji psuł `@@unique([academicYear, semesterType, studyMode, facultyId])`, bo
+  w Postgresie `NULL != NULL` i duplikat trzeba było łapać ręcznie w kontrolerze. Wspólne daty
+  dla całej uczelni zakłada się jednym gestem („wszystkie wydziały" → `createMany` po wierszu
+  na wydział, `skipDuplicates`), więc scentralizowany terminarz nadal jest jednym kliknięciem,
+  tylko zapisuje się jawnie.
+  `resolveSemesterRange` ma teraz **dwa** poziomy: kalendarz wydziału → daty wyliczone z roku
+  akademickiego. Ta druga ścieżka nie zna `teachingWeeks`, więc wydział bez kalendarza traci
+  przelicznik godzin semestralnych na tygodniowe w backlogu wzorca — dlatego strona ustawień
+  wypisuje wydziały bez kalendarza dla już używanych kombinacji rok/semestr/tryb.
+- **Kasowanie planu też jest dwuwarstwowe** (przycisk „Usun plan" w obu zakładkach planu zajęć).
+  Wzorzec tygodnia kasuje się listą id (`DELETE /schedule/templates`) zawężoną do wybranego typu
+  semestru, kalendarz — zakresem dat wydziału i trybu (`DELETE /schedule/entries`), tym samym,
+  którego używa generator. Można skasować jedno bez drugiego; obie operacje dotyczą jednego
+  wydziału i wymagają roli planisty (admin / dziekanat).
 - **Walidacja** świadomie tego pilnuje: `validateTemplate` porównuje wzorce tylko z wzorcami,
   `validateEntry` terminy tylko z terminami. Konflikty między warstwami rozstrzyga generator.
-- Sale i prowadzący są **współdzieleni między wydziałami**, więc generator sprawdza kolizje wobec
-  terminów całej uczelni. Kolejność generowania wydziałów ma znaczenie — kto pierwszy, ten zajmuje
-  zasób.
+- **Kolizja wzorców tylko w obrębie jednego typu semestru.** Zajęcia zimowe i letnie tego samego
+  roku akademickiego nigdy nie trwają jednocześnie, więc dzielą salę, prowadzącego i grupę bez
+  konfliktu. Typu semestru **nie wolno wyprowadzać z parzystości numeru** — przy naborze lutowym
+  (`startSemesterType = SUMMER`) semestr 1 jest letni; liczy go `semesterTypeOf` z siatki każdego
+  wzorca osobno (`sameSemesterType` w `scheduleValidation.ts`, to samo w podglądzie na siatce).
+  `validateEntry` tego nie potrzebuje — operuje na konkretnych datach.
+- Sale i prowadzący są **współdzieleni między wydziałami i trybami studiów**, więc generator
+  sprawdza kolizje wobec terminów całej uczelni. Kolejność generowania ma znaczenie — kto
+  pierwszy, ten zajmuje zasób.
 
 Konsekwencja do zakomunikowania użytkownikom: wszystko, co dziekanat poprawił ręcznie w kalendarzu,
 przepada przy kolejnym generowaniu. Dialog generowania pokazuje przed operacją, ile terminów

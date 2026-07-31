@@ -7,7 +7,16 @@ import {
   type DragOverEvent,
   type DragStartEvent,
 } from '@dnd-kit/core';
-import { CalendarDays, CalendarOff, ChevronLeft, ChevronRight, Pin, Plus, Sparkles } from 'lucide-react';
+import {
+  CalendarDays,
+  CalendarOff,
+  ChevronLeft,
+  ChevronRight,
+  Pin,
+  Plus,
+  Sparkles,
+  Trash2,
+} from 'lucide-react';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -41,6 +50,7 @@ import { fetchTimeBlocks } from '@/api/timeBlocks';
 import { getScheduleErrorMessage } from '@/lib/scheduleErrors';
 import { CLASS_COLORS, CLASS_FULL_LABELS, CLASS_LABELS, CLASS_TYPES, daysForMode } from '@/lib/scheduleDisplay';
 import { getGroupFamilyIds, isTimeWindowOk, rangesOverlap } from '@/lib/scheduleConflicts';
+import type { PlanScope } from '@/lib/planScope';
 import { STUDY_MODES, STUDY_MODE_LABELS } from '@/lib/labels';
 import {
   addDays,
@@ -55,6 +65,7 @@ import { useAuthStore } from '@/store/authStore';
 import { useAcademicYearStore } from '@/store/academicYearStore';
 import { useFacultyFilterStore } from '@/store/facultyStore';
 import { useFieldFilterStore } from '@/store/fieldFilterStore';
+import { ClearPlanDialog } from './ClearPlanDialog';
 import { CoverageCard } from './CoverageCard';
 import { EntryDialog } from './EntryDialog';
 import { EntryCreateDialog } from './EntryCreateDialog';
@@ -79,6 +90,7 @@ export default function CalendarTab() {
   // dialog pokazywalby migawke sprzed odswiezenia (status stary, mimo udanej zmiany).
   const [selectedEntryId, setSelectedEntryId] = useState<string | null>(null);
   const [generateOpen, setGenerateOpen] = useState(false);
+  const [clearOpen, setClearOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [createPrefill, setCreatePrefill] = useState<{ date: string; startBlockId?: string } | null>(
     null,
@@ -104,18 +116,17 @@ export default function CalendarTab() {
 
   const { data: calendars } = useQuery({ queryKey: ['semester-calendars'], queryFn: fetchCalendars });
 
-  // Poczatek wybranego semestru: z kalendarza (rok + typ + tryb), awaryjnie wyliczony z roku.
-  // Kalendarz wydzialowy ma pierwszenstwo nad ogolnouczelnianym — jak na backendzie.
+  // Poczatek wybranego semestru: z kalendarza wydzialu (rok + typ + tryb), awaryjnie
+  // wyliczony z roku — tak samo jak na backendzie (resolveSemesterRange).
   const semesterStart = useMemo(() => {
-    const matching = calendars?.filter(
+    const match = calendars?.find(
       (c) =>
         c.academicYear === academicYear &&
         c.semesterType === semesterType &&
-        c.studyMode === studyMode,
+        c.studyMode === studyMode &&
+        facultyId !== 'all' &&
+        c.facultyId === facultyId,
     );
-    const match =
-      matching?.find((c) => facultyId !== 'all' && c.facultyId === facultyId) ??
-      matching?.find((c) => c.facultyId === null);
     if (match) return startOfWeek(new Date(match.startDate));
     const firstYear = parseInt(academicYear.split('/')[0] ?? '', 10);
     if (!firstYear) return null;
@@ -226,6 +237,17 @@ export default function CalendarTab() {
     [buildings],
   );
 
+  // Zakres dla operacji na planie (generowanie, czyszczenie) — dokladnie to, co widac
+  // w pasku filtrow. Okna go nie dubluja, zeby nie bylo dwoch miejsc ustawiania tego samego.
+  const planScope: PlanScope = useMemo(
+    () => ({
+      fieldOfStudyId,
+      specializationId: selectedSpecializationId ?? 'all',
+      semester: semesterFilter,
+    }),
+    [fieldOfStudyId, selectedSpecializationId, semesterFilter],
+  );
+
   // grupa.id -> kierunek.id (fieldOfStudyId).
   const groupFieldMap = useMemo(
     () => new Map((groups ?? []).map((g) => [g.id, g.fieldOfStudyId])),
@@ -286,6 +308,10 @@ export default function CalendarTab() {
     () =>
       entries?.filter(
         (entry) =>
+          // Tryb studiow NIE jest wlasciwoscia terminu — bierzemy go z siatki. Bez tego
+          // warunku przelacznik trybu zmienial tylko kolumny dni, a w piatek zostawaly
+          // widoczne zajecia stacjonarne (i to od rana, wbrew oknu niestacjonarnych).
+          entry.curriculumEntry.curriculumVersion.studyMode === studyMode &&
           (roomFilter === 'all' || entry.room.id === roomFilter) &&
           (instructorFilter === 'all' || entry.instructor.id === instructorFilter) &&
           (classTypeFilter === 'all' || entry.classType === classTypeFilter) &&
@@ -299,6 +325,7 @@ export default function CalendarTab() {
       ) ?? [],
     [
       entries,
+      studyMode,
       roomFilter,
       instructorFilter,
       classTypeFilter,
@@ -518,6 +545,12 @@ export default function CalendarTab() {
             </Button>
           )}
           {canGenerate && (
+            <Button variant="outline" onClick={() => setClearOpen(true)}>
+              <Trash2 />
+              Usun plan
+            </Button>
+          )}
+          {canGenerate && (
             <Button onClick={() => setGenerateOpen(true)}>
               <Sparkles />
               Generuj semestr
@@ -695,7 +728,9 @@ export default function CalendarTab() {
         </div>
       </DndContext>
 
-      {!entriesPending && entries?.length === 0 && (
+      {/* Liczymy po terminach widocznych, nie po calym tygodniu — inaczej przy trybie bez
+          rozpisanego planu siatka zostawala pusta bez zadnego wyjasnienia. */}
+      {!entriesPending && visibleEntries.length === 0 && (
         <Empty className="border">
           <EmptyHeader>
             <EmptyMedia variant="icon">
@@ -716,6 +751,17 @@ export default function CalendarTab() {
         canEdit={canEdit}
       />
 
+      <ClearPlanDialog
+        open={clearOpen}
+        onOpenChange={setClearOpen}
+        academicYear={academicYear}
+        semesterType={semesterType}
+        studyMode={studyMode}
+        facultyId={facultyId}
+        scope={planScope}
+        defaultTarget="entries"
+      />
+
       <GenerateDialog
         open={generateOpen}
         onOpenChange={setGenerateOpen}
@@ -723,6 +769,7 @@ export default function CalendarTab() {
         semesterType={semesterType}
         studyMode={studyMode}
         facultyId={facultyId}
+        scope={planScope}
       />
 
       <EntryCreateDialog

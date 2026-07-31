@@ -311,13 +311,14 @@ model SemesterCalendar {
   teachingWeeks Int
   createdAt     DateTime     @default(now())
 
-  // null = kalendarz ogolnouczelniany. Wydzialowy ma pierwszenstwo, globalny jest
-  // fallbackiem — patrz lib/semesterCalendar.ts (resolveSemesterRange).
-  faculty   Faculty? @relation(fields: [facultyId], references: [id])
-  facultyId String?
+  // Kalendarz ZAWSZE nalezy do wydzialu. Wariant ogolnouczelniany (facultyId = null)
+  // zostal usuniety: definiowal zasieg przez brak ("wydzialy bez wlasnego"), psul
+  // unique ponizej (w Postgresie NULL != NULL) i wymagal osobnej galezi w polowie
+  // kodu planu. Wspolne daty dla calej uczelni zakladamy hurtem — po wierszu na
+  // wydzial — zamiast jednym wierszem-widmem.
+  faculty   Faculty @relation(fields: [facultyId], references: [id])
+  facultyId String
 
-  // UWAGA: w Postgresie NULL != NULL, wiec ten unique NIE blokuje dwoch kalendarzy
-  // ogolnouczelnianych o tym samym kluczu. Duplikat lapiemy jawnie w kontrolerze.
   @@unique([academicYear, semesterType, studyMode, facultyId])
 }
 
