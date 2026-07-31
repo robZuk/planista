@@ -11,16 +11,21 @@ wgrywa się do dowolnej bazy i sam usuwa to, co w niej zastanie.
 
 | Tabela | Wierszy |
 |---|---|
-| `ScheduleEntry` | 3327 |
-| `ScheduleTemplate` | 243 |
-| `CurriculumEntry` | 423 |
+| `ScheduleEntry` | 3502 |
+| `CurriculumEntry` | 1269 |
+| `ScheduleTemplate` | 257 |
 | `Subject` | 191 |
 | `StudentGroup` | 81 |
 | `Room` | 28 |
 | `Instructor` | 21 |
 | `TimeBlock` | 13 |
+| `SemesterCalendar` | 12 |
 | `User` | 4 |
 | `RefreshToken` | 0 |
+
+Plan obejmuje **oba tryby studiow**: 2362 terminy stacjonarne i 1140 niestacjonarnych
+(zima 2024/2025, Wydzial Mechaniczny). Kalendarze semestru sa wydzialowe — po jednym
+na kazdy rok, semestr i tryb.
 
 `_prisma_migrations` jest w zrzucie, więc po wgraniu Prisma nie migruje od zera.
 **Zrzut bywa jednak starszy niż katalog `backend/prisma/migrations/`** — po odtworzeniu
