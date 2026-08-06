@@ -200,8 +200,9 @@ export function EntryCreateDialog({
         <DialogHeader>
           <DialogTitle>Dodaj termin recznie</DialogTitle>
           <DialogDescription>
-            Wpis prosto w kalendarz — bez wzorca tygodnia. Dodaj jedna date albo kilka naraz; ponowne
-            generowanie semestru tych terminow nie ruszy.
+            Wpis prosto w kalendarz — bez wzorca tygodnia. Dodaj jedna date albo kilka naraz. Uwaga:
+            termin bez wzorca nie przetrwa ponownego generowania semestru ani czyszczenia kalendarza —
+            nadpisanie kasuje wszystkie terminy wydzialu w tym zakresie dat.
           </DialogDescription>
         </DialogHeader>
 
