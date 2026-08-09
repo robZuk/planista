@@ -66,6 +66,7 @@ import { semesterTypeOf } from '@/lib/semester';
 import { useAcademicYearStore } from '@/store/academicYearStore';
 import { useFacultyFilterStore } from '@/store/facultyStore';
 import { useFieldFilterStore } from '@/store/fieldFilterStore';
+import { useTemplateFilterStore } from '@/store/scheduleFilterStore';
 import { useAuthStore } from '@/store/authStore';
 import { ClearPlanDialog } from './ClearPlanDialog';
 import { TemplateDialog, type TemplatePrefill } from './TemplateDialog';
@@ -84,11 +85,26 @@ export default function TemplateTab() {
 
   const sensors = useScheduleSensors();
 
-  const [studyMode, setStudyMode] = useState<StudyMode>('FULL_TIME');
-  // versionId: konkretna siatka (= specjalnosc w tym roku+trybie), 'all' = wszystkie, '' = brak.
-  const [versionId, setVersionId] = useState('');
-  // semester: konkretny numer, 'all' = wszystkie, null = brak dostepnych.
-  const [semester, setSemester] = useState<number | 'all' | null>(null);
+  // Filtry trwale (przezywaja wyjscie na inny widok i powrot) — patrz scheduleFilterStore.
+  const {
+    studyMode,
+    versionId,
+    semester,
+    roomFilter,
+    instructorFilter,
+    classTypeFilter,
+    groupFilter,
+    weekView,
+    set: setFilters,
+  } = useTemplateFilterStore();
+  const setStudyMode = (value: StudyMode) => setFilters({ studyMode: value });
+  const setVersionId = (value: string) => setFilters({ versionId: value });
+  const setSemester = (value: number | 'all' | null) => setFilters({ semester: value });
+  const setRoomFilter = (value: string) => setFilters({ roomFilter: value });
+  const setInstructorFilter = (value: string) => setFilters({ instructorFilter: value });
+  const setClassTypeFilter = (value: string) => setFilters({ classTypeFilter: value });
+  const setGroupFilter = (value: string) => setFilters({ groupFilter: value });
+  const setWeekView = (value: WeekView) => setFilters({ weekView: value });
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [clearOpen, setClearOpen] = useState(false);
@@ -96,11 +112,6 @@ export default function TemplateTab() {
   const [prefill, setPrefill] = useState<TemplatePrefill | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [overId, setOverId] = useState<string | null>(null);
-  const [roomFilter, setRoomFilter] = useState('all');
-  const [instructorFilter, setInstructorFilter] = useState('all');
-  const [classTypeFilter, setClassTypeFilter] = useState('all');
-  const [groupFilter, setGroupFilter] = useState('all');
-  const [weekView, setWeekView] = useState<WeekView>('all');
 
   const { data: versions } = useQuery({
     queryKey: ['curriculum-versions'],
@@ -156,21 +167,25 @@ export default function TemplateTab() {
   // Po zmianie roku/trybu poprzedni wybor bywa nieaktualny — wracamy do pierwszej opcji.
   // 'all' (wszystkie specjalnosci) zostawiamy nietkniete, dopoki sa jakiekolwiek siatki.
   useEffect(() => {
+    // Dopoki siatki sie laduja, nie ruszamy wyboru — inaczej trwaly (persist) versionId
+    // zostalby wyczyszczony do pierwszej opcji, zanim dane dojda.
+    if (!versions) return;
     if (availableVersions.length === 0) {
       setVersionId('');
     } else if (versionId !== 'all' && !availableVersions.some((item) => item.id === versionId)) {
       setVersionId(availableVersions[0]!.id);
     }
-  }, [availableVersions, versionId]);
+  }, [versions, availableVersions, versionId]);
 
   useEffect(() => {
+    if (!versions) return; // jw. — nie nadpisuj trwalego semestru w trakcie ladowania
     if (semester === 'all') return; // "Wszystkie semestry" jest zawsze wazne
     if (semesterOptions.length === 0) {
       setSemester(null);
     } else if (semester === null || !semesterOptions.includes(semester)) {
       setSemester(semesterOptions[0]!);
     }
-  }, [semesterOptions, semester]);
+  }, [versions, semesterOptions, semester]);
 
   const { data: templates, isPending: templatesPending } = useQuery({
     queryKey: [
@@ -317,10 +332,13 @@ export default function TemplateTab() {
   // Gdy zmiana kontekstu (semestr/siatka/tryb) wyrzuci wybrana grupe poza zakres,
   // cofamy filtr na "Wszystkie grupy" zamiast pokazywac pusta siatke.
   useEffect(() => {
+    // Czekamy na dane (grupy + siatki), zeby trwaly groupFilter nie zostal wyczyszczony,
+    // zanim ustali sie kontekst (siatka/semestr) potrzebny do policzenia relevantGroups.
+    if (!groups || !versions) return;
     if (groupFilter !== 'all' && !relevantGroups.some((group) => group.id === groupFilter)) {
       setGroupFilter('all');
     }
-  }, [relevantGroups, groupFilter]);
+  }, [groups, versions, relevantGroups, groupFilter]);
 
   // Filtr po grupie obejmuje CALA rodzine (wyklad -> cwiczenia -> lab): wybor dowolnej
   // grupy pokazuje komplet zajec, na ktore chodzi jej sklad. null = brak zawezenia.
