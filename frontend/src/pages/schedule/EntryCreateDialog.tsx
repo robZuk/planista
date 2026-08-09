@@ -19,7 +19,9 @@ import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from '@/c
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
@@ -94,7 +96,12 @@ export function EntryCreateDialog({
   const rooms = useMemo(
     () =>
       buildings?.flatMap((building) =>
-        (building.rooms ?? []).map((room) => ({ ...room, buildingName: building.name })),
+        (building.rooms ?? []).map((room) => ({
+          ...room,
+          buildingName: building.name,
+          facultyId: building.faculty?.id ?? null,
+          facultyName: building.faculty?.name ?? null,
+        })),
       ) ?? [],
     [buildings],
   );
@@ -142,6 +149,43 @@ export function EntryCreateDialog({
   // Sale zawezone do typow pasujacych do zajec (lustro reguly z backendu).
   const allowedRoomTypes = ROOM_TYPES_FOR_CLASS[selectedClassType];
   const availableRooms = rooms.filter((room) => allowedRoomTypes.includes(room.type));
+
+  // Sale pogrupowane po wydziale (przez budynek); sale bez wydzialu -> sekcja na koncu.
+  const roomsByFaculty = useMemo(() => {
+    const map = new Map<string, { facultyName: string; items: typeof availableRooms }>();
+    for (const room of availableRooms) {
+      const key = room.facultyId ?? '__none__';
+      if (!map.has(key)) map.set(key, { facultyName: room.facultyName ?? 'Bez wydzialu', items: [] });
+      map.get(key)!.items.push(room);
+    }
+    return [...map.entries()]
+      .sort(([keyA, a], [keyB, b]) => {
+        if (keyA === '__none__') return 1;
+        if (keyB === '__none__') return -1;
+        return a.facultyName.localeCompare(b.facultyName, 'pl');
+      })
+      .map(([, group]) => group);
+  }, [availableRooms]);
+
+  // Prowadzacy pogrupowani po wydziale; bez wydzialu -> sekcja na koncu.
+  const instructorsByFaculty = useMemo(() => {
+    type Ins = NonNullable<typeof instructors>[number];
+    const map = new Map<string, { facultyName: string; items: Ins[] }>();
+    for (const instructor of instructors ?? []) {
+      const key = instructor.faculty?.id ?? '__none__';
+      if (!map.has(key)) {
+        map.set(key, { facultyName: instructor.faculty?.name ?? 'Bez wydzialu', items: [] });
+      }
+      map.get(key)!.items.push(instructor);
+    }
+    return [...map.entries()]
+      .sort(([keyA, a], [keyB, b]) => {
+        if (keyA === '__none__') return 1;
+        if (keyB === '__none__') return -1;
+        return a.facultyName.localeCompare(b.facultyName, 'pl');
+      })
+      .map(([, group]) => group);
+  }, [instructors]);
 
   const saveMutation = useMutation({
     mutationFn: async (values: EntryValues) => {
@@ -321,10 +365,15 @@ export function EntryCreateDialog({
                         <SelectValue placeholder="Wybierz" />
                       </SelectTrigger>
                       <SelectContent>
-                        {instructors?.map((instructor) => (
-                          <SelectItem key={instructor.id} value={instructor.id}>
-                            {`${instructor.title ?? ''} ${instructor.firstName} ${instructor.lastName}`.trim()}
-                          </SelectItem>
+                        {instructorsByFaculty.map((group) => (
+                          <SelectGroup key={group.facultyName}>
+                            <SelectLabel>{group.facultyName}</SelectLabel>
+                            {group.items.map((instructor) => (
+                              <SelectItem key={instructor.id} value={instructor.id}>
+                                {`${instructor.title ?? ''} ${instructor.firstName} ${instructor.lastName}`.trim()}
+                              </SelectItem>
+                            ))}
+                          </SelectGroup>
                         ))}
                       </SelectContent>
                     </Select>
@@ -344,10 +393,15 @@ export function EntryCreateDialog({
                         <SelectValue placeholder="Wybierz" />
                       </SelectTrigger>
                       <SelectContent>
-                        {availableRooms.map((room) => (
-                          <SelectItem key={room.id} value={room.id}>
-                            {room.buildingName} · {room.number} ({room.capacity} os.)
-                          </SelectItem>
+                        {roomsByFaculty.map((group) => (
+                          <SelectGroup key={group.facultyName}>
+                            <SelectLabel>{group.facultyName}</SelectLabel>
+                            {group.items.map((room) => (
+                              <SelectItem key={room.id} value={room.id}>
+                                {room.buildingName} · {room.number} ({room.capacity} os.)
+                              </SelectItem>
+                            ))}
+                          </SelectGroup>
                         ))}
                       </SelectContent>
                     </Select>

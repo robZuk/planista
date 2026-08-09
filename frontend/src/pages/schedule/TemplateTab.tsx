@@ -16,7 +16,9 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
@@ -68,7 +70,7 @@ import { useAuthStore } from '@/store/authStore';
 import { ClearPlanDialog } from './ClearPlanDialog';
 import { TemplateDialog, type TemplatePrefill } from './TemplateDialog';
 import { UnplannedPanel } from './UnplannedPanel';
-import type { DayOfWeek, ScheduleTemplate, StudyMode, WeekType } from '@/types';
+import type { DayOfWeek, Instructor, ScheduleTemplate, StudyMode, WeekType } from '@/types';
 
 export default function TemplateTab() {
   const queryClient = useQueryClient();
@@ -97,6 +99,7 @@ export default function TemplateTab() {
   const [roomFilter, setRoomFilter] = useState('all');
   const [instructorFilter, setInstructorFilter] = useState('all');
   const [classTypeFilter, setClassTypeFilter] = useState('all');
+  const [groupFilter, setGroupFilter] = useState('all');
   const [weekView, setWeekView] = useState<WeekView>('all');
 
   const { data: versions } = useQuery({
@@ -235,10 +238,52 @@ export default function TemplateTab() {
   const rooms = useMemo(
     () =>
       buildings?.flatMap((building) =>
-        (building.rooms ?? []).map((room) => ({ ...room, buildingName: building.name })),
+        (building.rooms ?? []).map((room) => ({
+          ...room,
+          buildingName: building.name,
+          facultyId: building.faculty?.id ?? null,
+          facultyName: building.faculty?.name ?? null,
+        })),
       ) ?? [],
     [buildings],
   );
+
+  // Sale w filtrze pogrupowane po wydziale (przez budynek); bez wydzialu -> sekcja na koncu.
+  const roomsByFaculty = useMemo(() => {
+    const map = new Map<string, { facultyName: string; items: typeof rooms }>();
+    for (const room of rooms) {
+      const key = room.facultyId ?? '__none__';
+      if (!map.has(key)) map.set(key, { facultyName: room.facultyName ?? 'Bez wydzialu', items: [] });
+      map.get(key)!.items.push(room);
+    }
+    return [...map.entries()]
+      .sort(([keyA, a], [keyB, b]) => {
+        if (keyA === '__none__') return 1;
+        if (keyB === '__none__') return -1;
+        return a.facultyName.localeCompare(b.facultyName, 'pl');
+      })
+      .map(([, group]) => group);
+  }, [rooms]);
+
+  // Prowadzacy w dropdownie pogrupowani po wydziale; bez wydzialu -> osobna sekcja na koncu.
+  const instructorsByFaculty = useMemo(() => {
+    const map = new Map<string, { facultyName: string; items: Instructor[] }>();
+    for (const instructor of instructors ?? []) {
+      const key = instructor.faculty?.id ?? '__none__';
+      if (!map.has(key)) {
+        map.set(key, { facultyName: instructor.faculty?.name ?? 'Bez wydzialu', items: [] });
+      }
+      map.get(key)!.items.push(instructor);
+    }
+    // Wydzialy alfabetycznie, sekcja "Bez wydzialu" zawsze na koncu.
+    return [...map.entries()]
+      .sort(([keyA, a], [keyB, b]) => {
+        if (keyA === '__none__') return 1;
+        if (keyB === '__none__') return -1;
+        return a.facultyName.localeCompare(b.facultyName, 'pl');
+      })
+      .map(([, group]) => group);
+  }, [instructors]);
 
   // Memo, bo od tej listy zalezy wyliczanie backlogu — nowa tablica przy kazdym
   // renderze przeliczalaby go bez potrzeby.
@@ -269,6 +314,21 @@ export default function TemplateTab() {
     );
   }, [groups, studyYear, version, studyMode]);
 
+  // Gdy zmiana kontekstu (semestr/siatka/tryb) wyrzuci wybrana grupe poza zakres,
+  // cofamy filtr na "Wszystkie grupy" zamiast pokazywac pusta siatke.
+  useEffect(() => {
+    if (groupFilter !== 'all' && !relevantGroups.some((group) => group.id === groupFilter)) {
+      setGroupFilter('all');
+    }
+  }, [relevantGroups, groupFilter]);
+
+  // Filtr po grupie obejmuje CALA rodzine (wyklad -> cwiczenia -> lab): wybor dowolnej
+  // grupy pokazuje komplet zajec, na ktore chodzi jej sklad. null = brak zawezenia.
+  const groupFilterFamilyIds = useMemo(
+    () => (groupFilter === 'all' ? null : getGroupFamilyIds(groupFilter, groups ?? [])),
+    [groupFilter, groups],
+  );
+
   // Backlog liczymy z PELNEJ listy wzorcow semestru — filtry widoku (sala/prowadzacy/forma)
   // zawezaja tylko to, co widac na siatce, a nie to, co faktycznie jest juz zaplanowane.
   const { items: unplannedItems, missingGroupTypes } = useMemo(
@@ -297,9 +357,11 @@ export default function TemplateTab() {
           (roomFilter === 'all' || template.room.id === roomFilter) &&
           (instructorFilter === 'all' || template.instructor.id === instructorFilter) &&
           (classTypeFilter === 'all' || template.classType === classTypeFilter) &&
+          (groupFilterFamilyIds === null ||
+            (!!template.studentGroup && groupFilterFamilyIds.includes(template.studentGroup.id))) &&
           matchesWeekView(template.weekType, weekView),
       ) ?? [],
-    [templates, roomFilter, instructorFilter, classTypeFilter, weekView],
+    [templates, roomFilter, instructorFilter, classTypeFilter, groupFilterFamilyIds, weekView],
   );
 
   /**
@@ -562,6 +624,20 @@ export default function TemplateTab() {
           </SelectContent>
         </Select>
 
+        <Select value={groupFilter} onValueChange={setGroupFilter} disabled={relevantGroups.length === 0}>
+          <SelectTrigger className="w-56" aria-label="Grupa">
+            <SelectValue placeholder="Grupa" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Wszystkie grupy</SelectItem>
+            {relevantGroups.map((group) => (
+              <SelectItem key={group.id} value={group.id}>
+                {group.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+
         <div className="ml-auto flex gap-2">
           {/* Kasowanie idzie po calym wzorcu wydzialu, wiec nie zalezy od wybranej siatki. */}
           {canClearPlan && (
@@ -588,10 +664,15 @@ export default function TemplateTab() {
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">Wszystkie sale</SelectItem>
-            {rooms.map((room) => (
-              <SelectItem key={room.id} value={room.id}>
-                {room.buildingName} · {room.number}
-              </SelectItem>
+            {roomsByFaculty.map((group) => (
+              <SelectGroup key={group.facultyName}>
+                <SelectLabel>{group.facultyName}</SelectLabel>
+                {group.items.map((room) => (
+                  <SelectItem key={room.id} value={room.id}>
+                    {room.buildingName} · {room.number}
+                  </SelectItem>
+                ))}
+              </SelectGroup>
             ))}
           </SelectContent>
         </Select>
@@ -602,10 +683,15 @@ export default function TemplateTab() {
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">Wszyscy prowadzacy</SelectItem>
-            {instructors?.map((instructor) => (
-              <SelectItem key={instructor.id} value={instructor.id}>
-                {`${instructor.title ? instructor.title + ' ' : ''}${instructor.firstName} ${instructor.lastName}`}
-              </SelectItem>
+            {instructorsByFaculty.map((group) => (
+              <SelectGroup key={group.facultyName}>
+                <SelectLabel>{group.facultyName}</SelectLabel>
+                {group.items.map((instructor) => (
+                  <SelectItem key={instructor.id} value={instructor.id}>
+                    {`${instructor.title ? instructor.title + ' ' : ''}${instructor.firstName} ${instructor.lastName}`}
+                  </SelectItem>
+                ))}
+              </SelectGroup>
             ))}
           </SelectContent>
         </Select>
