@@ -105,6 +105,7 @@ export default function CalendarTab() {
   // Filtry wyswietlania — jak w widoku wzorca tygodnia. 'all' = bez zawezania.
   const [versionFilter, setVersionFilter] = useState('all');
   const [semesterFilter, setSemesterFilter] = useState<number | 'all'>('all');
+  const [groupFilter, setGroupFilter] = useState('all');
 
   const days = daysForMode(studyMode);
   const allWeekDates = weekDates(monday);
@@ -328,6 +329,19 @@ export default function CalendarTab() {
     );
   }, [groups, semesterFilter, versionFilter, availableVersions, selectedSpecializationId, studyMode]);
 
+  // Gdy zmiana kontekstu wyrzuci wybrana grupe poza zakres, cofamy filtr na "Wszystkie grupy".
+  useEffect(() => {
+    if (groupFilter !== 'all' && !relevantGroups.some((group) => group.id === groupFilter)) {
+      setGroupFilter('all');
+    }
+  }, [relevantGroups, groupFilter]);
+
+  // Filtr po grupie obejmuje CALA rodzine (wyklad -> cwiczenia -> lab). null = brak zawezenia.
+  const groupFilterFamilyIds = useMemo(
+    () => (groupFilter === 'all' ? null : getGroupFamilyIds(groupFilter, groups ?? [])),
+    [groupFilter, groups],
+  );
+
   const openCreate = (date: string, startBlockId?: string) => {
     setCreatePrefill({ date, startBlockId });
     setCreateOpen(true);
@@ -364,7 +378,9 @@ export default function CalendarTab() {
           (versionFilter === 'all' ||
             entry.curriculumEntry.curriculumVersion.specializationId ===
               selectedSpecializationId) &&
-          (semesterFilter === 'all' || entry.curriculumEntry.semester === semesterFilter),
+          (semesterFilter === 'all' || entry.curriculumEntry.semester === semesterFilter) &&
+          (groupFilterFamilyIds === null ||
+            (entry.studentGroup != null && groupFilterFamilyIds.includes(entry.studentGroup.id))),
       ) ?? [],
     [
       entries,
@@ -377,6 +393,7 @@ export default function CalendarTab() {
       versionFilter,
       selectedSpecializationId,
       semesterFilter,
+      groupFilterFamilyIds,
     ],
   );
 
@@ -580,15 +597,29 @@ export default function CalendarTab() {
           </SelectContent>
         </Select>
 
+        <Select value={groupFilter} onValueChange={setGroupFilter} disabled={relevantGroups.length === 0}>
+          <SelectTrigger className="w-56" aria-label="Grupa">
+            <SelectValue placeholder="Grupa" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Wszystkie grupy</SelectItem>
+            {relevantGroups.map((group) => (
+              <SelectItem key={group.id} value={group.id}>
+                {group.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+
         <div className="ml-auto flex gap-2">
           {canAddEntry && (
-            <Button variant="outline" onClick={() => openCreate(from)}>
+            <Button onClick={() => openCreate(from)}>
               <Plus />
               Dodaj zajecia
             </Button>
           )}
           {canGenerate && (
-            <Button variant="outline" onClick={() => setClearOpen(true)}>
+            <Button variant="destructive" onClick={() => setClearOpen(true)}>
               <Trash2 />
               Usun plan
             </Button>
