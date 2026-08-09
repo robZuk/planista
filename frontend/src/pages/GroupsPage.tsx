@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { Pencil, Plus, Sparkles, Trash2, Users } from 'lucide-react';
+import { CopyPlus, Pencil, Plus, Trash2, Users } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   Accordion,
@@ -38,6 +38,7 @@ import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { AcademicYearSelector } from '@/components/AcademicYearSelector';
 import { FacultySelector } from '@/components/FacultySelector';
 import {
+  copyGroupsToNextYear,
   deleteAllGroups,
   deleteGroup,
   fetchGroups,
@@ -50,7 +51,6 @@ import { GROUP_TYPE_LABELS, STUDY_MODE_LABELS } from '@/lib/labels';
 import { useAcademicYearStore } from '@/store/academicYearStore';
 import { useFacultyFilterStore } from '@/store/facultyStore';
 import { useAuthStore } from '@/store/authStore';
-import { GenerateGroupsDialog } from './groups/GenerateGroupsDialog';
 import { CreateGroupDialog } from './groups/CreateGroupDialog';
 import { cn } from '@/lib/utils';
 import type { GroupType, StudentGroup } from '@/types';
@@ -61,6 +61,13 @@ const editSchema = z.object({
 });
 
 type EditValues = z.infer<typeof editSchema>;
+
+/** "2024/2025" -> "2025/2026". null dla formatu spoza RRRR/RRRR. */
+function nextAcademicYear(year: string): string | null {
+  const match = /^(\d{4})\/(\d{4})$/.exec(year);
+  if (!match) return null;
+  return `${Number(match[1]) + 1}/${Number(match[2]) + 1}`;
+}
 
 /** Kolor plakietki typu grupy — zeby poziomy hierarchii dalo sie rozroznic wzrokiem. */
 const TYPE_VARIANT: Record<GroupType, 'default' | 'secondary' | 'outline'> = {
@@ -79,11 +86,13 @@ export default function GroupsPage() {
 
   const [fieldFilter, setFieldFilter] = useState('all');
   const [specializationFilter, setSpecializationFilter] = useState('all');
-  const [generateOpen, setGenerateOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [editing, setEditing] = useState<StudentGroup | null>(null);
   const [deleting, setDeleting] = useState<StudentGroup | null>(null);
   const [purgeOpen, setPurgeOpen] = useState(false);
+  const [copyOpen, setCopyOpen] = useState(false);
+
+  const targetYear = nextAcademicYear(academicYear);
 
   const { data: groups, isPending } = useQuery({
     queryKey: ['groups', academicYear],
@@ -130,6 +139,16 @@ export default function GroupsPage() {
     onSuccess: () => {
       toast.success(`Usunieto grupy z roku ${academicYear}`);
       setPurgeOpen(false);
+      void invalidate();
+    },
+    onError: (error) => toast.error(getErrorMessage(error)),
+  });
+
+  const copyMutation = useMutation({
+    mutationFn: () => copyGroupsToNextYear(academicYear),
+    onSuccess: ({ targetYear: year, count }) => {
+      toast.success(`Skopiowano ${count} grup do roku ${year}`);
+      setCopyOpen(false);
       void invalidate();
     },
     onError: (error) => toast.error(getErrorMessage(error)),
@@ -267,9 +286,14 @@ export default function GroupsPage() {
                 <Plus />
                 Dodaj grupe
               </Button>
-              <Button onClick={() => setGenerateOpen(true)}>
-                <Sparkles />
-                Generuj grupy
+              <Button
+                variant="outline"
+                onClick={() => setCopyOpen(true)}
+                disabled={!targetYear || !groups || groups.length === 0}
+                title={targetYear ? `Skopiuj do roku ${targetYear}` : undefined}
+              >
+                <CopyPlus />
+                Kopiuj na nastepny rok
               </Button>
               <Button
                 variant="outline"
@@ -329,8 +353,8 @@ export default function GroupsPage() {
             </EmptyMedia>
             <EmptyTitle>Brak grup w roku {academicYear}</EmptyTitle>
             <EmptyDescription>
-              Generator odczyta z aktywnej siatki godzin, jakie formy zajec sa potrzebne, i
-              zaproponuje komplet grup. Zanim cokolwiek zapisze, pokaze podglad.
+              Dodaj grupe recznie albo skopiuj caly sklad z poprzedniego roku akademickiego
+              przyciskiem „Kopiuj na nastepny rok".
             </EmptyDescription>
           </EmptyHeader>
         </Empty>
@@ -364,13 +388,6 @@ export default function GroupsPage() {
           })}
         </Accordion>
       )}
-
-      <GenerateGroupsDialog
-        open={generateOpen}
-        onOpenChange={setGenerateOpen}
-        academicYear={academicYear}
-        onSaved={invalidate}
-      />
 
       <CreateGroupDialog
         open={createOpen}
@@ -438,6 +455,16 @@ export default function GroupsPage() {
         description="Grupa z podgrupami lub przypisana do zajec w planie nie zostanie usunieta."
         isPending={deleteMutation.isPending}
         onConfirm={() => deleting && deleteMutation.mutate(deleting.id)}
+      />
+
+      <ConfirmDialog
+        open={copyOpen}
+        onOpenChange={setCopyOpen}
+        title={`Skopiowac grupy do roku ${targetYear ?? ''}?`}
+        description={`Caly sklad grup z roku ${academicYear} (wraz z hierarchia, liczebnoscia i trybem studiow) zostanie utworzony na nowo w roku ${targetYear ?? ''}. Nowe grupy startuja bez przypisanych zajec i studentow. Rok docelowy musi byc pusty.`}
+        confirmLabel="Kopiuj"
+        isPending={copyMutation.isPending}
+        onConfirm={() => copyMutation.mutate()}
       />
 
       <ConfirmDialog

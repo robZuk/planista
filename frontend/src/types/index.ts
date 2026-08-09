@@ -112,7 +112,6 @@ export interface CurriculumVersion {
   degreeLevel: DegreeLevel;
   totalSemesters: number;
   startSemesterType: SemesterType;
-  isActive: boolean;
   specializationId: string;
   specialization?: Specialization;
   _count?: { entries: number };
@@ -161,14 +160,6 @@ export interface StudentGroup {
   parentGroupId: string | null;
   preferredRoomId: string | null;
   subGroups?: StudentGroup[];
-}
-
-export interface GroupProposalItem {
-  name: string;
-  type: GroupType;
-  size: number;
-  parentName: string | null;
-  studyYear: number;
 }
 
 export type ClassType = 'LECTURE' | 'EXERCISE' | 'LAB' | 'PROJECT' | 'SEMINAR';
