@@ -270,8 +270,10 @@ model ScheduleEntry {
   template   ScheduleTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
   templateId String? // null dla zajec-odrobien dodanych recznie i dla osieroconych
 
-  // Recznie zmieniony pojedynczy termin (przeniesienie "tylko ten" / zmiana statusu). Odczepiony
-  // termin nie jest juz ruszany przez operacje na calej serii (przeniesienie scope ALL).
+  // Recznie zmieniony pojedynczy termin: przeniesienie "tylko ten" (data, godzina, sala lub
+  // prowadzacy) albo zmiana statusu. Odczepiony termin jest POMIJANY przez operacje na calej
+  // serii (przeniesienie scope ALL), ale NIE przezywa generowania semestru — pelne nadpisanie
+  // kasuje go jak kazdy inny termin i rozpisuje przedmiot od nowa z wzorca.
   detached Boolean @default(false)
 
   // Wydzial wyprowadzany z siatki po stronie serwera — takze dla terminow dodanych

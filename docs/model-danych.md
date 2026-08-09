@@ -182,6 +182,14 @@ WZORZEC TYGODNIA (wydział+tryb) ─[GENEROWANIE SEMESTRU]─▶ KALENDARZ (wydz
   tylko powiązanie z serią (`templateId` → `NULL`, `ON DELETE SET NULL`).
 - **Edycja kalendarza nie zmienia wzorca.** Dotyczy to również przeniesienia całej serii
   (`scope: 'ALL'`), które przesuwa wyłącznie przyszłe terminy.
+- **Ręczna zmiana pojedynczego terminu „odczepia" go od serii** (`ScheduleEntry.detached`).
+  Przeniesienie „tylko ten" (`scope: 'ONE'` — data, godzina, **sala lub prowadzący**) oraz zmiana
+  statusu ustawiają `detached = true`. Odczepiony termin jest **pomijany** przez przeniesienie
+  całej serii (`scope: 'ALL'`, filtr `detached: false`), żeby bulk-move nie nadpisał ręcznej
+  korekty — dialog terminu oznacza go plakietką „Odczepiony". Odczepienie **nie chroni jednak
+  przed generowaniem semestru**: pełne nadpisanie (niżej) kasuje odczepione terminy tak samo jak
+  resztę i rozpisuje przedmiot od nowa z wzorca. Przeniesienie całej serii (`scope: 'ALL'`)
+  odczepienia **nie** ustawia.
 - **Generowanie semestru nadpisuje kalendarz wydziału w całości** — kasuje wszystkie jego terminy
   w zakresie dat, łącznie z dodanymi ręcznie (odrobienia), odwołanymi i przeniesionymi, po czym
   rozpisuje plan od zera. Zawsze dotyczy dokładnie jednego wydziału, także dla admina.
