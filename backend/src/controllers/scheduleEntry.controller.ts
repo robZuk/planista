@@ -560,24 +560,67 @@ export async function move(req: Request, res: Response): Promise<void> {
       const dayEnd = new Date(target);
       dayEnd.setUTCHours(23, 59, 59, 999);
       const base = { date: { gte: dayStart, lte: dayEnd }, status: { not: 'CANCELLED' as const }, id: { notIn: futureIds } };
-      const inc = { startBlock: { select: { order: true } }, endBlock: { select: { order: true } } };
-      const overlaps = (list: { startBlock: { order: number }; endBlock: { order: number } }[]) =>
-        list.some((x) => rangesOverlap(ns.order, ne.order, x.startBlock.order, x.endBlock.order));
+      // Pelne szczegoly konfliktu (label + zakres blokow), zeby komunikat byl czytelny —
+      // tak samo jak validateEntry przy przenoszeniu pojedynczego terminu. Bez tego
+      // front pokazywal "... undefined (undefined)".
+      const blockTimes = {
+        startBlock: { select: { order: true, startTime: true } },
+        endBlock: { select: { order: true, endTime: true } },
+      };
+      const hit = <T extends { startBlock: { order: number }; endBlock: { order: number } }>(list: T[]) =>
+        list.find((x) => rangesOverlap(ns.order, ne.order, x.startBlock.order, x.endBlock.order));
 
-      const roomC = await prisma.scheduleEntry.findMany({ where: { ...base, roomId: targetRoomId }, include: inc });
-      if (overlaps(roomC)) {
-        res.status(409).json({ error: 'ROOM_CONFLICT', details: { when: dateToStr(target) } });
+      const roomC = await prisma.scheduleEntry.findMany({
+        where: { ...base, roomId: targetRoomId },
+        include: { ...blockTimes, room: { select: { number: true, building: { select: { name: true } } } } },
+      });
+      const roomHit = hit(roomC);
+      if (roomHit) {
+        res.status(409).json({
+          error: 'ROOM_CONFLICT',
+          details: {
+            conflictId: roomHit.id,
+            label: `${roomHit.room.building.name}, sala ${roomHit.room.number}`,
+            blockRange: `${roomHit.startBlock.startTime}-${roomHit.endBlock.endTime}`,
+            when: dateToStr(target),
+          },
+        });
         return;
       }
-      const instrC = await prisma.scheduleEntry.findMany({ where: { ...base, instructorId: targetInstructorId }, include: inc });
-      if (overlaps(instrC)) {
-        res.status(409).json({ error: 'INSTRUCTOR_CONFLICT', details: { when: dateToStr(target) } });
+      const instrC = await prisma.scheduleEntry.findMany({
+        where: { ...base, instructorId: targetInstructorId },
+        include: { ...blockTimes, instructor: { select: { firstName: true, lastName: true, title: true } } },
+      });
+      const instrHit = hit(instrC);
+      if (instrHit) {
+        const i = instrHit.instructor;
+        res.status(409).json({
+          error: 'INSTRUCTOR_CONFLICT',
+          details: {
+            conflictId: instrHit.id,
+            label: `${i.title ? i.title + ' ' : ''}${i.firstName} ${i.lastName}`,
+            blockRange: `${instrHit.startBlock.startTime}-${instrHit.endBlock.endTime}`,
+            when: dateToStr(target),
+          },
+        });
         return;
       }
       if (groupFamilyIds.length > 0) {
-        const groupC = await prisma.scheduleEntry.findMany({ where: { ...base, studentGroupId: { in: groupFamilyIds } }, include: inc });
-        if (overlaps(groupC)) {
-          res.status(409).json({ error: 'GROUP_CONFLICT', details: { when: dateToStr(target) } });
+        const groupC = await prisma.scheduleEntry.findMany({
+          where: { ...base, studentGroupId: { in: groupFamilyIds } },
+          include: { ...blockTimes, studentGroup: { select: { name: true } } },
+        });
+        const groupHit = hit(groupC);
+        if (groupHit) {
+          res.status(409).json({
+            error: 'GROUP_CONFLICT',
+            details: {
+              conflictId: groupHit.id,
+              label: groupHit.studentGroup?.name ?? 'grupa',
+              blockRange: `${groupHit.startBlock.startTime}-${groupHit.endBlock.endTime}`,
+              when: dateToStr(target),
+            },
+          });
           return;
         }
       }
