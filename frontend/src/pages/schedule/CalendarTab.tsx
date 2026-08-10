@@ -159,6 +159,22 @@ export default function CalendarTab() {
     if (semesterStart) setMonday(semesterStart);
   }, [semesterStart]);
 
+  // Zakres dat semestru z kalendarza wydzialu (dokladne granice, nie zaokraglone do tygodnia).
+  // Dni poza tym zakresem wygaszamy — generator i tak nic na nich nie rozpisze. null =
+  // brak kalendarza dla tego kontekstu (wtedy zakres jest przyblizony, wiec nie wygaszamy).
+  const semesterRange = useMemo(() => {
+    const match = calendars?.find(
+      (c) =>
+        c.academicYear === academicYear &&
+        c.semesterType === semesterType &&
+        c.studyMode === studyMode &&
+        facultyId !== 'all' &&
+        c.facultyId === facultyId,
+    );
+    if (!match) return null;
+    return { startKey: toDateKey(match.startDate), endKey: toDateKey(match.endDate) };
+  }, [calendars, academicYear, semesterType, studyMode, facultyId]);
+
   const { data: blocks, isPending: blocksPending } = useQuery({
     queryKey: ['time-blocks'],
     queryFn: fetchTimeBlocks,
@@ -743,6 +759,10 @@ export default function CalendarTab() {
             {visibleDates.map((date) => {
               const dateKey = toDateKey(date);
               const holidayName = holidayByDate.get(dateKey);
+              // Dzien poza zakresem semestru (przed poczatkiem albo po koncu kalendarza wydzialu).
+              const outOfRange =
+                semesterRange !== null &&
+                (dateKey < semesterRange.startKey || dateKey > semesterRange.endKey);
               const dayEntries = visibleEntries.filter(
                 (entry) => toDateKey(entry.date) === dateKey,
               );
@@ -753,11 +773,16 @@ export default function CalendarTab() {
                 <div key={dateKey} className="min-w-44 flex-1 border-r last:border-r-0">
                   <ColumnHeader
                     title={`${label} ${formatDayShort(date)}`}
-                    subtitle={holidayName}
+                    subtitle={holidayName ?? (outOfRange ? 'Poza semestrem' : undefined)}
                     highlighted={isToday}
                   />
                   <div
-                    className={cn('relative', holidayName && 'bg-muted/40')}
+                    className={cn(
+                      'relative',
+                      holidayName && 'bg-muted/40',
+                      // Poza semestrem — kolumna wyraznie szara; generator i tak nic tu nie rozpisze.
+                      outOfRange && 'bg-muted/60',
+                    )}
                     style={{ height: blocks.length * ROW_HEIGHT, minHeight: ROW_HEIGHT }}
                   >
                     {blocks.map((block, rowIndex) => (
@@ -765,15 +790,21 @@ export default function CalendarTab() {
                         key={block.id}
                         id={`${dateKey}::${block.id}`}
                         rowIndex={rowIndex}
-                        disabled={!canEdit}
+                        disabled={!canEdit || outOfRange}
                         availability={
-                          cellAvailability
-                            ? cellAvailability.get(`${dateKey}::${block.id}`)
-                              ? 'available'
-                              : 'unavailable'
-                            : undefined
+                          // Poza semestrem nie kolorujemy dostepnosci (czerwony/zielony) —
+                          // dzien ma zostac po prostu szary.
+                          outOfRange
+                            ? undefined
+                            : cellAvailability
+                              ? cellAvailability.get(`${dateKey}::${block.id}`)
+                                ? 'available'
+                                : 'unavailable'
+                              : undefined
                         }
-                        onClick={canEdit ? () => handleCellClick(dateKey, block.id) : undefined}
+                        onClick={
+                          canEdit && !outOfRange ? () => handleCellClick(dateKey, block.id) : undefined
+                        }
                       />
                     ))}
 
@@ -801,6 +832,9 @@ export default function CalendarTab() {
                             CLASS_COLORS[entry.classType],
                             // Odwolane zajecia zostaja widoczne, ale wyraznie wyciszone.
                             cancelled && 'opacity-50 line-through',
+                            // Termin poza zakresem semestru — szary (odbarwiony), bo i tak
+                            // nie nalezy do tego semestru.
+                            outOfRange && 'grayscale opacity-60',
                           )}
                           disabled={!canEdit}
                           onClick={() => setSelectedEntryId(entry.id)}
@@ -850,6 +884,7 @@ export default function CalendarTab() {
         entry={selectedEntry}
         onOpenChange={(open) => !open && setSelectedEntryId(null)}
         canEdit={canEdit}
+        semesterRange={semesterRange}
       />
 
       <ClearPlanDialog

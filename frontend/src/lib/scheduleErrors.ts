@@ -83,6 +83,11 @@ export function getScheduleErrorMessage(error: unknown): string {
       } h, probujesz dodac ${details?.requested ?? '?'} h. Zostalo ${details?.remaining ?? 0} h.`;
     }
 
+    case 'DATE_OUTSIDE_SEMESTER':
+      return `Termin wypada poza zakresem semestru (${details?.startDate ?? '?'} – ${
+        details?.endDate ?? '?'
+      }). Wybierz date w tym przedziale.`;
+
     case 'TIME_WINDOW_VIOLATION':
     case 'BAD_BLOCK_RANGE':
       return String(details?.message ?? 'Nieprawidlowy termin zajec');

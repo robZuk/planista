@@ -8,7 +8,36 @@ import { getCallerInstructorId } from '../lib/callerInstructor';
 import { getCallerFacultyId } from '../lib/callerFaculty';
 import { resolveFacultyId } from '../lib/curriculumFaculty';
 import { resolveSemesterRange } from '../lib/semesterCalendar';
+import { semesterTypeOf } from '../lib/semester';
 import { rangesOverlap, checkTimeWindow, dateToStr } from '../lib/scheduleTime';
+
+/**
+ * Granice semestru (klucze RRRR-MM-DD) dla terminu — z kalendarza wydzialu, a gdy go
+ * nie ma, z dat wyliczonych z roku. Sluzy do pilnowania, ze reczne przeniesienie/dodanie
+ * nie wyrzuci zajec poza semestr (generator i tak rozpisuje plan tylko w tym zakresie).
+ * null = nie da sie wyznaczyc (brak wpisu siatki) — wtedy nie blokujemy.
+ */
+async function semesterKeysForEntry(
+  curriculumEntryId: string,
+  facultyId: string,
+): Promise<{ startKey: string; endKey: string } | null> {
+  const ce = await prisma.curriculumEntry.findUnique({
+    where: { id: curriculumEntryId },
+    select: {
+      semester: true,
+      curriculumVersion: { select: { academicYear: true, studyMode: true, startSemesterType: true } },
+    },
+  });
+  if (!ce) return null;
+  const semesterType = semesterTypeOf(ce.curriculumVersion.startSemesterType, ce.semester);
+  const range = await resolveSemesterRange(
+    ce.curriculumVersion.academicYear,
+    semesterType,
+    ce.curriculumVersion.studyMode,
+    facultyId,
+  );
+  return { startKey: dateToStr(range.startDate), endKey: dateToStr(range.endDate) };
+}
 
 const entryInclude = {
   room: { select: { id: true, number: true, type: true, building: { select: { id: true, name: true } } } },
@@ -115,6 +144,16 @@ export async function create(req: Request, res: Response): Promise<void> {
       const myFacultyId = await getCallerFacultyId(req.user!.id);
       if (myFacultyId !== facultyId) {
         res.status(403).json({ error: 'Mozesz dodawac terminy tylko w obrebie swojego wydzialu' });
+        return;
+      }
+    }
+
+    // Termin musi miescic sie w zakresie semestru wydzialu — inaczej wisialby poza planem.
+    const keys = await semesterKeysForEntry(body.curriculumEntryId, facultyId);
+    if (keys) {
+      const dayKey = dateToStr(new Date(body.date));
+      if (dayKey < keys.startKey || dayKey > keys.endKey) {
+        res.status(400).json({ error: 'DATE_OUTSIDE_SEMESTER', details: { startDate: keys.startKey, endDate: keys.endKey } });
         return;
       }
     }
@@ -367,6 +406,15 @@ export async function move(req: Request, res: Response): Promise<void> {
 
     // ─── scope ONE ──────────────────────────────────────────
     if (scope === 'ONE') {
+      // Nie pozwalamy wypchnac terminu poza zakres semestru wydzialu.
+      const keys = await semesterKeysForEntry(existing.curriculumEntryId, existing.facultyId);
+      if (keys) {
+        const dayKey = dateToStr(new Date(newDate));
+        if (dayKey < keys.startKey || dayKey > keys.endKey) {
+          res.status(400).json({ error: 'DATE_OUTSIDE_SEMESTER', details: { startDate: keys.startKey, endDate: keys.endKey } });
+          return;
+        }
+      }
       const error = await validateEntry({
         date: new Date(newDate),
         roomId: targetRoomId,
@@ -448,6 +496,22 @@ export async function move(req: Request, res: Response): Promise<void> {
     const holidayList = await prisma.publicHoliday.findMany();
     const holidaySet = new Set(holidayList.map((h) => dateToStr(h.date)));
     const movable = shifted.filter((s) => !holidaySet.has(dateToStr(s.target)));
+
+    // Zaden z przesunietych terminow nie moze wypasc poza zakres semestru wydzialu.
+    const rangeKeys = await semesterKeysForEntry(existing.curriculumEntryId, existing.facultyId);
+    if (rangeKeys) {
+      const outside = movable.find((s) => {
+        const k = dateToStr(s.target);
+        return k < rangeKeys.startKey || k > rangeKeys.endKey;
+      });
+      if (outside) {
+        res.status(400).json({
+          error: 'DATE_OUTSIDE_SEMESTER',
+          details: { startDate: rangeKeys.startKey, endDate: rangeKeys.endKey, when: dateToStr(outside.target) },
+        });
+        return;
+      }
+    }
 
     // Zakres blokow docelowy (order) do sprawdzenia konfliktow.
     const [ns, ne] = await Promise.all([

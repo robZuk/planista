@@ -40,10 +40,12 @@ interface Props {
   entry: ScheduleEntry | null;
   onOpenChange: (open: boolean) => void;
   canEdit: boolean;
+  /** Granice semestru (RRRR-MM-DD) — ograniczaja wybor daty. null = brak zawezenia. */
+  semesterRange?: { startKey: string; endKey: string } | null;
 }
 
 /** Szczegoly jednego terminu: status, przeniesienie i usuniecie. */
-export function EntryDialog({ entry, onOpenChange, canEdit }: Props) {
+export function EntryDialog({ entry, onOpenChange, canEdit, semesterRange }: Props) {
   const queryClient = useQueryClient();
   const { data: blocks } = useQuery({ queryKey: ['time-blocks'], queryFn: fetchTimeBlocks });
   const { data: buildings } = useQuery({ queryKey: ['buildings'], queryFn: fetchBuildings });
@@ -175,6 +177,10 @@ export function EntryDialog({ entry, onOpenChange, canEdit }: Props) {
     moveRoomId !== entry.room.id ||
     moveInstructorId !== entry.instructor.id;
 
+  // Wybrana data poza semestrem — blokujemy zapis (backend i tak odrzuci).
+  const dateOutOfRange =
+    !!semesterRange && (moveDate < semesterRange.startKey || moveDate > semesterRange.endKey);
+
   return (
     <>
       <Dialog open={!!entry} onOpenChange={onOpenChange}>
@@ -300,8 +306,16 @@ export function EntryDialog({ entry, onOpenChange, canEdit }: Props) {
                       id="moveDate"
                       type="date"
                       value={moveDate}
+                      min={semesterRange?.startKey}
+                      max={semesterRange?.endKey}
+                      aria-invalid={dateOutOfRange}
                       onChange={(event) => setMoveDate(event.target.value)}
                     />
+                    {dateOutOfRange && (
+                      <FieldDescription className="text-destructive">
+                        Data poza zakresem semestru ({semesterRange!.startKey} – {semesterRange!.endKey}).
+                      </FieldDescription>
+                    )}
                   </Field>
 
                   <Field>
@@ -360,7 +374,10 @@ export function EntryDialog({ entry, onOpenChange, canEdit }: Props) {
                 Zamknij
               </Button>
               {canEdit && (
-                <Button onClick={() => moveMutation.mutate()} disabled={!moved || moveMutation.isPending}>
+                <Button
+                  onClick={() => moveMutation.mutate()}
+                  disabled={!moved || dateOutOfRange || moveMutation.isPending}
+                >
                   {moveMutation.isPending && <Spinner />}
                   Zapisz zmiany
                 </Button>
