@@ -75,7 +75,6 @@ model CurriculumVersion {
   // Typ kolejnych semestrow wyliczamy naprzemiennie -> patrz lib/semester.ts (semesterTypeOf).
   startSemesterType SemesterType @default(WINTER)
 
-  isActive Boolean @default(true)
   specialization   Specialization    @relation(fields: [specializationId], references: [id])
   specializationId String
   entries          CurriculumEntry[]

@@ -36,7 +36,6 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Spinner } from '@/components/ui/spinner';
-import { Switch } from '@/components/ui/switch';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { AcademicYearSelector } from '@/components/AcademicYearSelector';
 import { FieldOfStudySelector } from '@/components/FieldOfStudySelector';
@@ -48,7 +47,6 @@ import {
   createVersion,
   deleteVersion,
   fetchVersions,
-  updateVersion,
   type CreateVersionInput,
 } from '@/api/curriculum';
 import { fetchSpecializations } from '@/api/specializations';
@@ -86,12 +84,11 @@ type VersionValues = z.infer<typeof versionSchema>;
 const COLUMN_LABELS = {
   specialization: 'Specjalnosc',
   field: 'Kierunek',
-  academicYear: 'Rok',
+  academicYear: 'Rocznik naboru',
   studyMode: 'Tryb',
   degreeLevel: 'Stopien',
   totalSemesters: 'Semestry',
   entries: 'Przedmioty',
-  isActive: 'Aktywna',
 };
 
 export default function VersionsTab() {
@@ -170,13 +167,6 @@ export default function VersionsTab() {
       setDialogOpen(false);
       invalidate();
     },
-    onError: (error) => toast.error(getErrorMessage(error)),
-  });
-
-  const toggleActive = useMutation({
-    mutationFn: ({ id, isActive }: { id: string; isActive: boolean }) =>
-      updateVersion(id, { isActive }),
-    onSuccess: () => invalidate(),
     onError: (error) => toast.error(getErrorMessage(error)),
   });
 
@@ -260,18 +250,6 @@ export default function VersionsTab() {
       accessorFn: (row) => row._count?.entries ?? 0,
       header: 'Przedmioty',
       cell: ({ row }) => <Badge variant="secondary">{row.original._count?.entries ?? 0}</Badge>,
-    },
-    {
-      accessorKey: 'isActive',
-      header: 'Aktywna',
-      cell: ({ row }) => (
-        <Switch
-          checked={row.original.isActive}
-          disabled={!canEdit || toggleActive.isPending}
-          aria-label="Siatka aktywna"
-          onCheckedChange={(isActive) => toggleActive.mutate({ id: row.original.id, isActive })}
-        />
-      ),
     },
     {
       id: 'actions',
@@ -364,16 +342,16 @@ export default function VersionsTab() {
                 <>
                   <EmptyTitle>Zadna siatka nie pasuje do filtrow</EmptyTitle>
                   <EmptyDescription>
-                    W roku {academicYear} jest {inYear?.length} siatek, ale wybrany wydzial,
-                    kierunek lub stopien je odsiewa.
+                    Dla rocznika naboru {academicYear} jest {inYear?.length} siatek, ale wybrany
+                    wydzial, kierunek lub stopien je odsiewa.
                   </EmptyDescription>
                 </>
               ) : (
                 <>
-                  <EmptyTitle>Brak siatek dla roku {academicYear}</EmptyTitle>
+                  <EmptyTitle>Brak siatek dla rocznika naboru {academicYear}</EmptyTitle>
                   <EmptyDescription>
-                    Siatka wiaze specjalnosc z rokiem i trybem studiow. Zmien rok w przelaczniku
-                    powyzej albo utworz nowa.
+                    Siatka wiaze specjalnosc z rocznikiem naboru i trybem studiow. Zmien rocznik w
+                    przelaczniku powyzej albo utworz nowa.
                   </EmptyDescription>
                 </>
               )}
@@ -395,7 +373,8 @@ export default function VersionsTab() {
           <DialogHeader>
             <DialogTitle>Nowa siatka godzin</DialogTitle>
             <DialogDescription>
-              Specjalnosc, rok i tryb tworza razem klucz — takiej kombinacji nie da sie powtorzyc.
+              Specjalnosc, rocznik naboru i tryb tworza razem klucz — takiej kombinacji nie da sie
+              powtorzyc.
             </DialogDescription>
           </DialogHeader>
 
@@ -427,13 +406,17 @@ export default function VersionsTab() {
 
               <div className="grid gap-4 sm:grid-cols-2">
                 <Field>
-                  <FieldLabel htmlFor="academicYear">Rok akademicki</FieldLabel>
+                  <FieldLabel htmlFor="academicYear">Rocznik naboru</FieldLabel>
                   <Input
                     id="academicYear"
                     placeholder="2024/2025"
                     aria-invalid={!!form.formState.errors.academicYear}
                     {...form.register('academicYear')}
                   />
+                  <FieldDescription>
+                    Rok akademicki, w ktorym rocznik zaczyna studia — siatka obowiazuje go przez
+                    caly tok, nie jest rokiem prowadzenia zajec.
+                  </FieldDescription>
                   <FieldError errors={[form.formState.errors.academicYear]} />
                 </Field>
 

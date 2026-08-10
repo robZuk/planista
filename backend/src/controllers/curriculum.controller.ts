@@ -89,10 +89,10 @@ export async function createVersion(req: Request, res: Response): Promise<void> 
 
 export async function updateVersion(req: Request, res: Response): Promise<void> {
   try {
-    const { totalSemesters, isActive } = req.body as { totalSemesters?: number; isActive?: boolean };
+    const { totalSemesters } = req.body as { totalSemesters?: number };
     const data = await prisma.curriculumVersion.update({
       where: { id: req.params.id },
-      data: { totalSemesters, isActive },
+      data: { totalSemesters },
     });
     res.json({ data, message: 'Siatka zaktualizowana' });
   } catch (error) {

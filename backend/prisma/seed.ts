@@ -206,7 +206,6 @@ async function main() {
         degreeLevel: 'BACHELOR',
         totalSemesters: 7,
         startSemesterType: 'WINTER',
-        isActive: year === ACADEMIC_YEAR,
         specializationId: dut.id,
       },
     });
