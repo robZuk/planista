@@ -455,7 +455,9 @@ export default function CalendarTab() {
     const map = new Map<string, boolean>();
     for (const date of visibleDates) {
       const dateKey = toDateKey(date);
-      const dayNum = date.getUTCDay();
+      // Lokalny dzien tygodnia — daty w siatce to lokalna polnoc (patrz scheduleDates.ts).
+      // getUTCDay() cofal poniedzialek na niedziele w strefach UTC+ i barwil go na czerwono.
+      const dayNum = date.getDay();
       const dayEntries = others.filter((e) => toDateKey(e.date) === dateKey);
 
       for (const startBlock of blocks) {
@@ -549,6 +551,27 @@ export default function CalendarTab() {
       return;
     }
     if (toDateKey(entry.date) === dateKey && entry.startBlock.id === blockId) return;
+
+    // Blokada przenoszenia poza semestr dziala tez pod "Wszystkie wydzialy", gdzie
+    // semesterRange (dla wyszarzenia kolumn) jest null. Zakres bierzemy z kalendarza
+    // KONKRETNEGO wydzialu przenoszonego terminu — inaczej drop przeciekal na backend.
+    const entryCalendar = calendars?.find(
+      (c) =>
+        c.academicYear === academicYear &&
+        c.semesterType === semesterType &&
+        c.studyMode === studyMode &&
+        c.facultyId === entry.facultyId,
+    );
+    if (entryCalendar) {
+      const startKey = toDateKey(entryCalendar.startDate);
+      const endKey = toDateKey(entryCalendar.endDate);
+      if (dateKey < startKey || dateKey > endKey) {
+        toast.error(
+          `Termin wypada poza zakresem semestru (${startKey} – ${endKey}). Wybierz date w tym przedziale.`,
+        );
+        return;
+      }
+    }
 
     moveMutation.mutate({
       entry,
