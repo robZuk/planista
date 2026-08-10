@@ -159,9 +159,9 @@ export function EntryDialog({ entry, onOpenChange, canEdit, semesterRange }: Pro
   });
 
   const deleteMutation = useMutation({
-    mutationFn: () => deleteEntry(entry!.id),
-    onSuccess: () => {
-      toast.success('Termin usuniety');
+    mutationFn: () => deleteEntry(entry!.id, scope),
+    onSuccess: (response) => {
+      toast.success(response.message ?? 'Termin usuniety');
       setConfirmDelete(false);
       invalidate();
       onOpenChange(false);
@@ -336,7 +336,7 @@ export function EntryDialog({ entry, onOpenChange, canEdit, semesterRange }: Pro
                 </div>
 
                 <Field>
-                  <FieldLabel>Zakres przeniesienia</FieldLabel>
+                  <FieldLabel>Zakres operacji</FieldLabel>
                   <RadioGroup value={scope} onValueChange={(value) => setScope(value as 'ONE' | 'ALL')}>
                     <FieldLabel htmlFor="scope-one" className="font-normal">
                       <RadioGroupItem value="ONE" id="scope-one" />
@@ -390,8 +390,12 @@ export function EntryDialog({ entry, onOpenChange, canEdit, semesterRange }: Pro
       <ConfirmDialog
         open={confirmDelete}
         onOpenChange={setConfirmDelete}
-        title="Usunac ten termin?"
-        description="Znika tylko ten jeden termin. Wzorzec tygodnia zostaje, wiec kolejne generowanie moze go odtworzyc."
+        title={scope === 'ALL' ? 'Usunac ten i wszystkie kolejne terminy?' : 'Usunac ten termin?'}
+        description={
+          scope === 'ALL'
+            ? 'Znika ten termin i wszystkie kolejne z tej serii (poza odczepionymi). Wzorzec tygodnia zostaje, wiec kolejne generowanie moze je odtworzyc.'
+            : 'Znika tylko ten jeden termin. Wzorzec tygodnia zostaje, wiec kolejne generowanie moze go odtworzyc.'
+        }
         isPending={deleteMutation.isPending}
         onConfirm={() => deleteMutation.mutate()}
       />

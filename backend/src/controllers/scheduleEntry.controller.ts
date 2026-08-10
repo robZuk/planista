@@ -235,6 +235,7 @@ export async function updateStatus(req: Request, res: Response): Promise<void> {
 
 export async function remove(req: Request, res: Response): Promise<void> {
   try {
+    const { scope } = (req.body ?? {}) as { scope?: 'ONE' | 'ALL' };
     const existing = await prisma.scheduleEntry.findUnique({ where: { id: req.params.id } });
     if (!existing) {
       res.status(404).json({ error: 'Termin nie znaleziony' });
@@ -247,6 +248,34 @@ export async function remove(req: Request, res: Response): Promise<void> {
         return;
       }
     }
+
+    // scope ALL — kasujemy ten termin i wszystkie KOLEJNE z tej samej serii (wzorca),
+    // pomijajac terminy odczepione (detached). Semantyka lustrzana do przenoszenia serii
+    // w move(): seria = wspolny templateId, od daty tego terminu w gore. Sam klikniety
+    // termin usuwamy zawsze (galaz `id`), nawet jesli jest odczepiony.
+    if (scope === 'ALL') {
+      if (!existing.templateId) {
+        res.status(400).json({ error: 'Brak serii — ten termin nie pochodzi z wzorca' });
+        return;
+      }
+      const fromDate = new Date(existing.date);
+      fromDate.setUTCHours(0, 0, 0, 0);
+      const seriesWhere = {
+        OR: [
+          { id: existing.id },
+          { templateId: existing.templateId, date: { gte: fromDate }, detached: false },
+        ],
+      };
+      // Instruktor kasuje tylko wlasne terminy — takze w obrebie serii.
+      const where =
+        req.user!.role === 'INSTRUCTOR'
+          ? { AND: [seriesWhere, { instructorId: existing.instructorId }] }
+          : seriesWhere;
+      const { count } = await prisma.scheduleEntry.deleteMany({ where });
+      res.json({ message: `Usunieto ${count} terminow z serii` });
+      return;
+    }
+
     await prisma.scheduleEntry.delete({ where: { id: req.params.id } });
     res.json({ message: 'Termin usuniety' });
   } catch (error) {

@@ -153,8 +153,13 @@ export async function updateEntryStatus(id: string, status: EntryStatus): Promis
   return res.data.data;
 }
 
-export async function deleteEntry(id: string): Promise<void> {
-  await api.delete(`/schedule/entries/${id}`);
+export async function deleteEntry(
+  id: string,
+  // ONE = tylko ten termin, ALL = ten i wszystkie kolejne z tej serii (jak przy przenoszeniu).
+  scope: 'ONE' | 'ALL' = 'ONE',
+): Promise<{ message: string }> {
+  const res = await api.delete(`/schedule/entries/${id}`, { data: { scope } });
+  return res.data;
 }
 
 /**
