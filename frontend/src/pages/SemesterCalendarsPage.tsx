@@ -94,6 +94,12 @@ export default function SemesterCalendarsPage() {
   const [editing, setEditing] = useState<SemesterCalendar | null>(null);
   const [deleting, setDeleting] = useState<SemesterCalendar | null>(null);
 
+  // Filtry listy — zawezaja tylko to, co widac w tabeli. 'all' = bez zawezania.
+  const [yearFilter, setYearFilter] = useState('all');
+  const [semesterFilter, setSemesterFilter] = useState<SemesterType | 'all'>('all');
+  const [modeFilter, setModeFilter] = useState<StudyMode | 'all'>('all');
+  const [facultyFilter, setFacultyFilter] = useState('all');
+
   const { data, isPending } = useQuery({ queryKey: ['semester-calendars'], queryFn: fetchCalendars });
   const { data: years } = useQuery({ queryKey: ['academic-years'], queryFn: fetchAcademicYears });
   const { data: faculties } = useQuery({ queryKey: ['faculties'], queryFn: fetchFaculties });
@@ -342,6 +348,18 @@ export default function SemesterCalendarsPage() {
       : []),
   ];
 
+  const filteredData = useMemo(
+    () =>
+      (data ?? []).filter(
+        (calendar) =>
+          (yearFilter === 'all' || calendar.academicYear === yearFilter) &&
+          (semesterFilter === 'all' || calendar.semesterType === semesterFilter) &&
+          (modeFilter === 'all' || calendar.studyMode === modeFilter) &&
+          (facultyFilter === 'all' || calendar.facultyId === facultyFilter),
+      ),
+    [data, yearFilter, semesterFilter, modeFilter, facultyFilter],
+  );
+
   return (
     <>
       <PageHeader
@@ -389,9 +407,73 @@ export default function SemesterCalendarsPage() {
         </Alert>
       )}
 
+      <div className="flex flex-wrap items-center gap-2">
+        <Select value={yearFilter} onValueChange={setYearFilter}>
+          <SelectTrigger className="w-40" aria-label="Rok akademicki">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Wszystkie lata</SelectItem>
+            {years?.map((year) => (
+              <SelectItem key={year} value={year}>
+                {year}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+
+        <Select
+          value={semesterFilter}
+          onValueChange={(value) => setSemesterFilter(value as SemesterType | 'all')}
+        >
+          <SelectTrigger className="w-44" aria-label="Typ semestru">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Wszystkie semestry</SelectItem>
+            {(Object.keys(SEMESTER_TYPE_LABELS) as SemesterType[]).map((type) => (
+              <SelectItem key={type} value={type}>
+                {SEMESTER_TYPE_LABELS[type]}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+
+        <Select
+          value={modeFilter}
+          onValueChange={(value) => setModeFilter(value as StudyMode | 'all')}
+        >
+          <SelectTrigger className="w-44" aria-label="Tryb studiow">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Wszystkie tryby</SelectItem>
+            {STUDY_MODES.map((mode) => (
+              <SelectItem key={mode} value={mode}>
+                {STUDY_MODE_LABELS[mode]}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+
+        <Select value={facultyFilter} onValueChange={setFacultyFilter}>
+          <SelectTrigger className="w-56" aria-label="Wydzial">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Wszystkie wydzialy</SelectItem>
+            {faculties?.map((faculty) => (
+              <SelectItem key={faculty.id} value={faculty.id}>
+                {faculty.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+
       <DataTable
         columns={columns}
-        data={data}
+        data={filteredData}
         isLoading={isPending}
         searchPlaceholder="Szukaj kalendarza…"
         columnLabels={COLUMN_LABELS}

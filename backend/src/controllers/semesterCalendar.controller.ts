@@ -91,9 +91,11 @@ export async function getAll(req: Request, res: Response): Promise<void> {
     const data = await prisma.semesterCalendar.findMany({
       where: myFacultyId ? { facultyId: myFacultyId } : {},
       include: calendarInclude,
-      // Rok + typ semestru zostawialy remis miedzy trybami studiow i wydzialami.
-      // Czworka [academicYear, semesterType, studyMode, facultyId] to klucz unikalny.
-      orderBy: [{ academicYear: 'asc' }, { semesterType: 'asc' }, { studyMode: 'asc' }, { facultyId: 'asc' }],
+      // Najnowszy rok akademicki na gorze — to on jest "biezacy" i zgodny z aktualnym
+      // planem/siatka; starsze lata schodza nizej. W obrebie roku kolejnosc stala
+      // (typ semestru -> tryb -> wydzial); czworka [academicYear, semesterType, studyMode,
+      // facultyId] to klucz unikalny.
+      orderBy: [{ academicYear: 'desc' }, { semesterType: 'asc' }, { studyMode: 'asc' }, { facultyId: 'asc' }],
     });
 
     // Kalendarz sam z siebie nie mowi, co od niego zalezy — bez tego edycja dat i usuwanie
