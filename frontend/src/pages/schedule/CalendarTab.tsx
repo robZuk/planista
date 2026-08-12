@@ -67,7 +67,6 @@ import { useAuthStore } from '@/store/authStore';
 import { useAcademicYearStore } from '@/store/academicYearStore';
 import { useFacultyFilterStore } from '@/store/facultyStore';
 import { useFieldFilterStore } from '@/store/fieldFilterStore';
-import { useCalendarFilterStore } from '@/store/scheduleFilterStore';
 import { ClearPlanDialog } from './ClearPlanDialog';
 import { CoverageCard } from './CoverageCard';
 import { EntryDialog } from './EntryDialog';
@@ -87,25 +86,7 @@ export default function CalendarTab() {
 
   const sensors = useScheduleSensors();
 
-  // Filtry trwale (przezywaja wyjscie na inny widok i powrot) — patrz scheduleFilterStore.
-  const {
-    studyMode,
-    versionFilter,
-    semesterFilter,
-    roomFilter,
-    instructorFilter,
-    classTypeFilter,
-    groupFilter,
-    set: setFilters,
-  } = useCalendarFilterStore();
-  const setStudyMode = (value: StudyMode) => setFilters({ studyMode: value });
-  const setVersionFilter = (value: string) => setFilters({ versionFilter: value });
-  const setSemesterFilter = (value: number | 'all') => setFilters({ semesterFilter: value });
-  const setRoomFilter = (value: string) => setFilters({ roomFilter: value });
-  const setInstructorFilter = (value: string) => setFilters({ instructorFilter: value });
-  const setClassTypeFilter = (value: string) => setFilters({ classTypeFilter: value });
-  const setGroupFilter = (value: string) => setFilters({ groupFilter: value });
-
+  const [studyMode, setStudyMode] = useState<StudyMode>('FULL_TIME');
   const [monday, setMonday] = useState(() => startOfWeek(new Date()));
   // Trzymamy tylko id, a obiekt wyprowadzamy z zywych danych — inaczej po zmianie statusu
   // dialog pokazywalby migawke sprzed odswiezenia (status stary, mimo udanej zmiany).
@@ -118,6 +99,13 @@ export default function CalendarTab() {
   );
   const [activeId, setActiveId] = useState<string | null>(null);
   const [overId, setOverId] = useState<string | null>(null);
+  const [roomFilter, setRoomFilter] = useState('all');
+  const [instructorFilter, setInstructorFilter] = useState('all');
+  const [classTypeFilter, setClassTypeFilter] = useState('all');
+  // Filtry wyswietlania — jak w widoku wzorca tygodnia. 'all' = bez zawezania.
+  const [versionFilter, setVersionFilter] = useState('all');
+  const [semesterFilter, setSemesterFilter] = useState<number | 'all'>('all');
+  const [groupFilter, setGroupFilter] = useState('all');
 
   const days = daysForMode(studyMode);
   const allWeekDates = weekDates(monday);
@@ -247,21 +235,18 @@ export default function CalendarTab() {
   }, [availableVersions, versionFilter, semesterType]);
 
   // Gdy zmiana roku/trybu/wydzialu/kierunku uniewazni wybrana specjalnosc — wracamy na "Wszystkie".
-  // Guard `!versions`: dopoki siatki sie laduja, nie ruszamy trwalego (persist) versionFilter.
   useEffect(() => {
-    if (!versions) return;
     if (versionFilter !== 'all' && !availableVersions.some((v) => v.id === versionFilter)) {
       setVersionFilter('all');
     }
-  }, [versions, availableVersions, versionFilter]);
+  }, [availableVersions, versionFilter]);
 
   // Analogicznie semestr — gdy wypadnie z dostepnych (np. po zmianie typu semestru).
   useEffect(() => {
-    if (!versions) return;
     if (semesterFilter !== 'all' && !semesterOptions.includes(semesterFilter)) {
       setSemesterFilter('all');
     }
-  }, [versions, semesterOptions, semesterFilter]);
+  }, [semesterOptions, semesterFilter]);
 
   const rooms = useMemo(
     () =>
@@ -361,13 +346,11 @@ export default function CalendarTab() {
   }, [groups, semesterFilter, versionFilter, availableVersions, selectedSpecializationId, studyMode]);
 
   // Gdy zmiana kontekstu wyrzuci wybrana grupe poza zakres, cofamy filtr na "Wszystkie grupy".
-  // Guard na dane, zeby trwaly groupFilter nie zostal wyczyszczony przed ustaleniem kontekstu.
   useEffect(() => {
-    if (!groups || !versions) return;
     if (groupFilter !== 'all' && !relevantGroups.some((group) => group.id === groupFilter)) {
       setGroupFilter('all');
     }
-  }, [groups, versions, relevantGroups, groupFilter]);
+  }, [relevantGroups, groupFilter]);
 
   // Filtr po grupie obejmuje CALA rodzine (wyklad -> cwiczenia -> lab). null = brak zawezenia.
   const groupFilterFamilyIds = useMemo(
