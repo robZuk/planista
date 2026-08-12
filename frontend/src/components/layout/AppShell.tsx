@@ -46,7 +46,7 @@ export function AppShell() {
                   </>
                 )}
                 <BreadcrumbItem>
-                  <BreadcrumbPage>{crumb?.item.label ?? 'Planista 7'}</BreadcrumbPage>
+                  <BreadcrumbPage>{crumb?.item.label ?? 'Planista'}</BreadcrumbPage>
                 </BreadcrumbItem>
               </BreadcrumbList>
             </Breadcrumb>
