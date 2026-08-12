@@ -11,6 +11,9 @@ build/
 .env.local
 *.local
 
+# claude code — lokalne uprawnienia per maszyna (nie wspoldzielone; *.local ich nie lapie)
+**/settings.local.json
+
 # logs
 *.log
 npm-debug.log*
