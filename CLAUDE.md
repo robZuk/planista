@@ -1,5 +1,7 @@
 # CLAUDE.md
 
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
 Wskazówki dla Claude Code przy pracy w tym repozytorium. Szczegóły domenowe
 (model danych, semantyka pól) są w `docs/model-danych.md` i w `README.md`.
 
@@ -36,6 +38,10 @@ npm run dev
 Health-check backendu: `GET http://localhost:4001/health` (poza prefiksem
 `/api`). Wszystkie właściwe endpointy są pod `/api/*` i wymagają tokenu JWT.
 
+Port frontu jest ustawiony na sztywno (`strictPort`) — jeśli 5174 jest zajęty,
+Vite zatrzyma się z błędem zamiast przejść na kolejny wolny port (inaczej łatwo
+pomylić planista7 z uruchomioną obok planista6).
+
 ## Polecenia
 
 **Backend** (`backend/`)
@@ -55,16 +61,27 @@ Health-check backendu: `GET http://localhost:4001/health` (poza prefiksem
 
 ## Testy
 
-Backend ma szkielet testów jednostkowych na **Vitest** (`npm test` w `backend/`,
-Prisma mockowana przez `vi.mock` — bez bazy). `createApp()` w `backend/src/index.ts`
-jest wyeksportowane właśnie po to, by dało się testować API przez supertest bez
-nasłuchiwania na porcie. Pliki `*.test.ts` są wykluczone z builda `tsc`.
+Testy jednostkowe stoją na **Vitest**, **osobno per pakiet** (root nie ma
+`package.json`) — uruchamiaj `npm test` w `backend/` albo w `frontend/`, nie w
+katalogu głównym. Wspólny jest tylko runner, nie konfiguracja.
 
-> Uwaga: setup Vitest wchodzi osobnym PR-em (`test/scheduleValidation-szkielet`) —
-> jeśli `npm test` nie działa na Twojej gałęzi, ten PR nie jest jeszcze scalony.
+- **Backend** (`backend/`): `npm test` / `npm run test:watch`. Config w
+  `vitest.config.mts` (`environment: node`). Prisma jest **mockowana** przez
+  `vi.mock('../lib/prisma')`, więc testy nie wymagają bazy ani zmiennych
+  środowiskowych. Pliki `*.test.ts` są wykluczone z builda `tsc` (patrz
+  `exclude` w `tsconfig.json`), więc nie trafiają do `dist/`. Pokryte:
+  `services/scheduleValidation`, `lib/scheduleTime`, `lib/semester`.
+- **Frontend** (`frontend/`): `npm test` / `npm run test:watch`. Config w
+  `vitest.config.ts` (osobny od `vite.config.ts`, z tym samym aliasem `@`).
+  Pierwsza iteracja to **czysta logika** z `src/lib` (bez DOM): `semester`,
+  `scheduleConflicts`, `planScope`, `unplannedItems`.
 
-Frontend nie ma jeszcze testów. Weryfikacja zmian UI odbywa się przez uruchomienie
-aplikacji (patrz skill `/verify`).
+Zakres startowy to wyłącznie czysta logika domenowa — **nie ma** jeszcze testów
+komponentów React ani tras Express (supertest). `createApp()` w
+`backend/src/index.ts` jest wyeksportowane właśnie pod przyszłe testy API bez
+nasłuchiwania na porcie (serwer startuje tylko przy `require.main === module`).
+
+Weryfikacja zmian UI wciąż idzie przez uruchomienie aplikacji (skill `/verify`).
 
 ## Architektura
 
@@ -113,9 +130,13 @@ store'y zustand (współdzielone między stronami).
 - **Język:** komentarze, komunikaty i wiadomości commitów po polsku, zwykle
   **bez znaków diakrytycznych** (`walidacja`, `konflikt`, `poludnie UTC`).
 - **Commity:** format `Obszar: opis` (np. `Kalendarz: usuwanie terminu honoruje
-  zakres serii (ONE/ALL)`). Historia zwykle liniowa; feature-branche scalane
-  do `main` przez `--no-ff`.
+  zakres serii (ONE/ALL)`). Po polsku, bez diakrytyków.
 - **Praca na gałęziach:** nie commituj bezpośrednio na `main` — załóż gałąź.
+- **Scalanie (zasada hybrydowa):** sposób merge'a zależy od liczby commitów na gałęzi:
+  - **jeden commit** → fast-forward albo rebase na `main` (bez merge-commita) —
+    historia zostaje liniowa, bez pustych `Merge branch 'x'`.
+  - **kilka commitów tworzących jeden feature** → `--no-ff` (merge-commit grupuje
+    całość, umożliwia `revert -m`), albo `--squash` gdy ma zostać jeden wpis w `main`.
 - **Czas w planie:** wyrażany blokami 1-godzinnymi (`TimeBlock.order`), nie
   stringami godzin. Konflikt czasu = nakładanie zakresów `order` (`rangesOverlap`).
 - **Daty semestru:** generator używa **południa UTC** (odporność na DST).
