@@ -1,0 +1,48 @@
+# CI — typecheck, testy i build obu pakietow (root nie ma package.json, wiec
+# backend i frontend leca w osobnych jobach, rownolegle). Testy nie wymagaja
+# bazy: backend mockuje Prisme (vi.mock), frontend testuje czysta logike.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  backend:
+    name: Backend (test + build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      # Generuje @prisma/client — backend importuje z niego typy (bez tego tsc padnie).
+      # Nie laczy sie z baza.
+      - run: npx prisma generate
+      - run: npm test
+      - run: npm run build
+
+  frontend:
+    name: Frontend (test + build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm test
+      # build = tsc -b && vite build (typecheck + build produkcyjny)
+      - run: npm run build
