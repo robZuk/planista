@@ -7,7 +7,16 @@ import {
   type DragOverEvent,
   type DragStartEvent,
 } from '@dnd-kit/core';
-import { CalendarDays, CalendarOff, ChevronLeft, ChevronRight, Pin, Plus, Sparkles } from 'lucide-react';
+import {
+  CalendarDays,
+  CalendarOff,
+  ChevronLeft,
+  ChevronRight,
+  Pin,
+  Plus,
+  Sparkles,
+  Trash2,
+} from 'lucide-react';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -15,7 +24,9 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
@@ -37,11 +48,11 @@ import { semesterTypeOf } from '@/lib/semester';
 import { fetchGroups } from '@/api/groups';
 import { fetchBuildings } from '@/api/buildings';
 import { fetchInstructors } from '@/api/instructors';
-import { fetchFieldsOfStudy } from '@/api/fieldsOfStudy';
 import { fetchTimeBlocks } from '@/api/timeBlocks';
 import { getScheduleErrorMessage } from '@/lib/scheduleErrors';
 import { CLASS_COLORS, CLASS_FULL_LABELS, CLASS_LABELS, CLASS_TYPES, daysForMode } from '@/lib/scheduleDisplay';
 import { getGroupFamilyIds, isTimeWindowOk, rangesOverlap } from '@/lib/scheduleConflicts';
+import type { PlanScope } from '@/lib/planScope';
 import { STUDY_MODES, STUDY_MODE_LABELS } from '@/lib/labels';
 import {
   addDays,
@@ -56,12 +67,13 @@ import { useAuthStore } from '@/store/authStore';
 import { useAcademicYearStore } from '@/store/academicYearStore';
 import { useFacultyFilterStore } from '@/store/facultyStore';
 import { useFieldFilterStore } from '@/store/fieldFilterStore';
+import { ClearPlanDialog } from './ClearPlanDialog';
 import { CoverageCard } from './CoverageCard';
 import { EntryDialog } from './EntryDialog';
 import { EntryCreateDialog } from './EntryCreateDialog';
 import { GenerateDialog } from './GenerateDialog';
 import { cn } from '@/lib/utils';
-import type { ScheduleEntry, StudyMode } from '@/types';
+import type { Instructor, ScheduleEntry, StudyMode } from '@/types';
 
 export default function CalendarTab() {
   const queryClient = useQueryClient();
@@ -80,6 +92,7 @@ export default function CalendarTab() {
   // dialog pokazywalby migawke sprzed odswiezenia (status stary, mimo udanej zmiany).
   const [selectedEntryId, setSelectedEntryId] = useState<string | null>(null);
   const [generateOpen, setGenerateOpen] = useState(false);
+  const [clearOpen, setClearOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [createPrefill, setCreatePrefill] = useState<{ date: string; startBlockId?: string } | null>(
     null,
@@ -92,6 +105,7 @@ export default function CalendarTab() {
   // Filtry wyswietlania — jak w widoku wzorca tygodnia. 'all' = bez zawezania.
   const [versionFilter, setVersionFilter] = useState('all');
   const [semesterFilter, setSemesterFilter] = useState<number | 'all'>('all');
+  const [groupFilter, setGroupFilter] = useState('all');
 
   const days = daysForMode(studyMode);
   const allWeekDates = weekDates(monday);
@@ -105,13 +119,16 @@ export default function CalendarTab() {
 
   const { data: calendars } = useQuery({ queryKey: ['semester-calendars'], queryFn: fetchCalendars });
 
-  // Poczatek wybranego semestru: z kalendarza (rok + typ + tryb), awaryjnie wyliczony z roku.
+  // Poczatek wybranego semestru: z kalendarza wydzialu (rok + typ + tryb), awaryjnie
+  // wyliczony z roku — tak samo jak na backendzie (resolveSemesterRange).
   const semesterStart = useMemo(() => {
     const match = calendars?.find(
       (c) =>
         c.academicYear === academicYear &&
         c.semesterType === semesterType &&
-        c.studyMode === studyMode,
+        c.studyMode === studyMode &&
+        facultyId !== 'all' &&
+        c.facultyId === facultyId,
     );
     if (match) return startOfWeek(new Date(match.startDate));
     const firstYear = parseInt(academicYear.split('/')[0] ?? '', 10);
@@ -122,7 +139,7 @@ export default function CalendarTab() {
         ? new Date(Date.UTC(firstYear, 9, 1))
         : new Date(Date.UTC(firstYear + 1, 1, 17));
     return startOfWeek(fallback);
-  }, [calendars, academicYear, semesterType, studyMode]);
+  }, [calendars, academicYear, semesterType, studyMode, facultyId]);
 
   // Zmiana roku/semestru/trybu ustawia widok na poczatek tego semestru. Reczna nawigacja
   // tygodniami zostaje — efekt odpala sie tylko gdy zmieni sie ktorys z tych filtrow.
@@ -130,13 +147,31 @@ export default function CalendarTab() {
     if (semesterStart) setMonday(semesterStart);
   }, [semesterStart]);
 
+  // Zakres dat semestru z kalendarza wydzialu (dokladne granice, nie zaokraglone do tygodnia).
+  // Dni poza tym zakresem wygaszamy — generator i tak nic na nich nie rozpisze. null =
+  // brak kalendarza dla tego kontekstu (wtedy zakres jest przyblizony, wiec nie wygaszamy).
+  const semesterRange = useMemo(() => {
+    const match = calendars?.find(
+      (c) =>
+        c.academicYear === academicYear &&
+        c.semesterType === semesterType &&
+        c.studyMode === studyMode &&
+        facultyId !== 'all' &&
+        c.facultyId === facultyId,
+    );
+    if (!match) return null;
+    return { startKey: toDateKey(match.startDate), endKey: toDateKey(match.endDate) };
+  }, [calendars, academicYear, semesterType, studyMode, facultyId]);
+
   const { data: blocks, isPending: blocksPending } = useQuery({
     queryKey: ['time-blocks'],
     queryFn: fetchTimeBlocks,
   });
+  // Wydzial zawezamy po stronie serwera (ScheduleEntry ma wlasny facultyId), wiec
+  // terminy bez grupy studenckiej tez sa poprawnie przypisane.
   const { data: entries, isPending: entriesPending } = useQuery({
-    queryKey: ['schedule-entries', from, to],
-    queryFn: () => fetchEntries({ from, to }),
+    queryKey: ['schedule-entries', from, to, facultyId],
+    queryFn: () => fetchEntries({ from, to, ...(facultyId === 'all' ? {} : { facultyId }) }),
   });
   // Zaznaczony termin liczymy z aktualnych danych, zeby dialog zawsze mial swiezy status.
   const selectedEntry = entries?.find((e) => e.id === selectedEntryId) ?? null;
@@ -151,11 +186,6 @@ export default function CalendarTab() {
   });
   const { data: buildings } = useQuery({ queryKey: ['buildings'], queryFn: fetchBuildings });
   const { data: instructors } = useQuery({ queryKey: ['instructors'], queryFn: fetchInstructors });
-  // Wydzialu nie ma wprost na terminie — mapujemy go przez grupe -> kierunek -> wydzial.
-  const { data: fields } = useQuery({
-    queryKey: ['fields-of-study'],
-    queryFn: () => fetchFieldsOfStudy(),
-  });
   // Siatki (= specjalnosci) — do filtra Specjalnosc, tak samo jak w widoku wzorca tygodnia.
   const { data: versions } = useQuery({
     queryKey: ['curriculum-versions'],
@@ -221,18 +251,62 @@ export default function CalendarTab() {
   const rooms = useMemo(
     () =>
       buildings?.flatMap((building) =>
-        (building.rooms ?? []).map((room) => ({ ...room, buildingName: building.name })),
+        (building.rooms ?? []).map((room) => ({
+          ...room,
+          buildingName: building.name,
+          facultyId: building.faculty?.id ?? null,
+          facultyName: building.faculty?.name ?? null,
+        })),
       ) ?? [],
     [buildings],
   );
 
-  // grupa.id -> wydzial.id (przez fieldOfStudyId grupy i facultyId kierunku).
-  const groupFacultyMap = useMemo(() => {
-    const fieldFaculty = new Map((fields ?? []).map((f) => [f.id, f.facultyId]));
-    return new Map(
-      (groups ?? []).map((g) => [g.id, fieldFaculty.get(g.fieldOfStudyId) ?? null]),
-    );
-  }, [groups, fields]);
+  // Sale w filtrze pogrupowane po wydziale (przez budynek); bez wydzialu -> sekcja na koncu.
+  const roomsByFaculty = useMemo(() => {
+    const map = new Map<string, { facultyName: string; items: typeof rooms }>();
+    for (const room of rooms) {
+      const key = room.facultyId ?? '__none__';
+      if (!map.has(key)) map.set(key, { facultyName: room.facultyName ?? 'Bez wydzialu', items: [] });
+      map.get(key)!.items.push(room);
+    }
+    return [...map.entries()]
+      .sort(([keyA, a], [keyB, b]) => {
+        if (keyA === '__none__') return 1;
+        if (keyB === '__none__') return -1;
+        return a.facultyName.localeCompare(b.facultyName, 'pl');
+      })
+      .map(([, group]) => group);
+  }, [rooms]);
+
+  // Prowadzacy w dropdownie pogrupowani po wydziale; bez wydzialu -> osobna sekcja na koncu.
+  const instructorsByFaculty = useMemo(() => {
+    const map = new Map<string, { facultyName: string; items: Instructor[] }>();
+    for (const instructor of instructors ?? []) {
+      const key = instructor.faculty?.id ?? '__none__';
+      if (!map.has(key)) {
+        map.set(key, { facultyName: instructor.faculty?.name ?? 'Bez wydzialu', items: [] });
+      }
+      map.get(key)!.items.push(instructor);
+    }
+    return [...map.entries()]
+      .sort(([keyA, a], [keyB, b]) => {
+        if (keyA === '__none__') return 1;
+        if (keyB === '__none__') return -1;
+        return a.facultyName.localeCompare(b.facultyName, 'pl');
+      })
+      .map(([, group]) => group);
+  }, [instructors]);
+
+  // Zakres dla operacji na planie (generowanie, czyszczenie) — dokladnie to, co widac
+  // w pasku filtrow. Okna go nie dubluja, zeby nie bylo dwoch miejsc ustawiania tego samego.
+  const planScope: PlanScope = useMemo(
+    () => ({
+      fieldOfStudyId,
+      specializationId: selectedSpecializationId ?? 'all',
+      semester: semesterFilter,
+    }),
+    [fieldOfStudyId, selectedSpecializationId, semesterFilter],
+  );
 
   // grupa.id -> kierunek.id (fieldOfStudyId).
   const groupFieldMap = useMemo(
@@ -271,6 +345,19 @@ export default function CalendarTab() {
     );
   }, [groups, semesterFilter, versionFilter, availableVersions, selectedSpecializationId, studyMode]);
 
+  // Gdy zmiana kontekstu wyrzuci wybrana grupe poza zakres, cofamy filtr na "Wszystkie grupy".
+  useEffect(() => {
+    if (groupFilter !== 'all' && !relevantGroups.some((group) => group.id === groupFilter)) {
+      setGroupFilter('all');
+    }
+  }, [relevantGroups, groupFilter]);
+
+  // Filtr po grupie obejmuje CALA rodzine (wyklad -> cwiczenia -> lab). null = brak zawezenia.
+  const groupFilterFamilyIds = useMemo(
+    () => (groupFilter === 'all' ? null : getGroupFamilyIds(groupFilter, groups ?? [])),
+    [groupFilter, groups],
+  );
+
   const openCreate = (date: string, startBlockId?: string) => {
     setCreatePrefill({ date, startBlockId });
     setCreateOpen(true);
@@ -287,38 +374,42 @@ export default function CalendarTab() {
     openCreate(date, startBlockId);
   };
 
-  // Niezalezne filtry Sala/Prowadzacy + glowne Wydzial/Kierunek — ograniczaja TYLKO wyswietlane
-  // terminy. Konflikty (podpowiedz przy przeciaganiu) liczymy dalej z pelnych danych tygodnia.
+  // Niezalezne filtry Sala/Prowadzacy + glowny Kierunek — ograniczaja TYLKO wyswietlane
+  // terminy. Wydzial jest juz zawezony po stronie serwera. Konflikty (podpowiedz przy
+  // przeciaganiu) liczymy dalej z pelnych danych tygodnia.
   const visibleEntries = useMemo(
     () =>
       entries?.filter(
         (entry) =>
+          // Tryb studiow NIE jest wlasciwoscia terminu — bierzemy go z siatki. Bez tego
+          // warunku przelacznik trybu zmienial tylko kolumny dni, a w piatek zostawaly
+          // widoczne zajecia stacjonarne (i to od rana, wbrew oknu niestacjonarnych).
+          entry.curriculumEntry.curriculumVersion.studyMode === studyMode &&
           (roomFilter === 'all' || entry.room.id === roomFilter) &&
           (instructorFilter === 'all' || entry.instructor.id === instructorFilter) &&
           (classTypeFilter === 'all' || entry.classType === classTypeFilter) &&
-          (facultyId === 'all' ||
-            (entry.studentGroup != null &&
-              groupFacultyMap.get(entry.studentGroup.id) === facultyId)) &&
           (fieldOfStudyId === 'all' ||
             (entry.studentGroup != null &&
               groupFieldMap.get(entry.studentGroup.id) === fieldOfStudyId)) &&
           (versionFilter === 'all' ||
             entry.curriculumEntry.curriculumVersion.specializationId ===
               selectedSpecializationId) &&
-          (semesterFilter === 'all' || entry.curriculumEntry.semester === semesterFilter),
+          (semesterFilter === 'all' || entry.curriculumEntry.semester === semesterFilter) &&
+          (groupFilterFamilyIds === null ||
+            (entry.studentGroup != null && groupFilterFamilyIds.includes(entry.studentGroup.id))),
       ) ?? [],
     [
       entries,
+      studyMode,
       roomFilter,
       instructorFilter,
       classTypeFilter,
-      facultyId,
       fieldOfStudyId,
-      groupFacultyMap,
       groupFieldMap,
       versionFilter,
       selectedSpecializationId,
       semesterFilter,
+      groupFilterFamilyIds,
     ],
   );
 
@@ -347,7 +438,9 @@ export default function CalendarTab() {
     const map = new Map<string, boolean>();
     for (const date of visibleDates) {
       const dateKey = toDateKey(date);
-      const dayNum = date.getUTCDay();
+      // Lokalny dzien tygodnia — daty w siatce to lokalna polnoc (patrz scheduleDates.ts).
+      // getUTCDay() cofal poniedzialek na niedziele w strefach UTC+ i barwil go na czerwono.
+      const dayNum = date.getDay();
       const dayEntries = others.filter((e) => toDateKey(e.date) === dateKey);
 
       for (const startBlock of blocks) {
@@ -442,6 +535,27 @@ export default function CalendarTab() {
     }
     if (toDateKey(entry.date) === dateKey && entry.startBlock.id === blockId) return;
 
+    // Blokada przenoszenia poza semestr dziala tez pod "Wszystkie wydzialy", gdzie
+    // semesterRange (dla wyszarzenia kolumn) jest null. Zakres bierzemy z kalendarza
+    // KONKRETNEGO wydzialu przenoszonego terminu — inaczej drop przeciekal na backend.
+    const entryCalendar = calendars?.find(
+      (c) =>
+        c.academicYear === academicYear &&
+        c.semesterType === semesterType &&
+        c.studyMode === studyMode &&
+        c.facultyId === entry.facultyId,
+    );
+    if (entryCalendar) {
+      const startKey = toDateKey(entryCalendar.startDate);
+      const endKey = toDateKey(entryCalendar.endDate);
+      if (dateKey < startKey || dateKey > endKey) {
+        toast.error(
+          `Termin wypada poza zakresem semestru (${startKey} – ${endKey}). Wybierz date w tym przedziale.`,
+        );
+        return;
+      }
+    }
+
     moveMutation.mutate({
       entry,
       newDate: dateKey,
@@ -522,11 +636,31 @@ export default function CalendarTab() {
           </SelectContent>
         </Select>
 
+        <Select value={groupFilter} onValueChange={setGroupFilter} disabled={relevantGroups.length === 0}>
+          <SelectTrigger className="w-56" aria-label="Grupa">
+            <SelectValue placeholder="Grupa" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Wszystkie grupy</SelectItem>
+            {relevantGroups.map((group) => (
+              <SelectItem key={group.id} value={group.id}>
+                {group.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+
         <div className="ml-auto flex gap-2">
           {canAddEntry && (
-            <Button variant="outline" onClick={() => openCreate(from)}>
+            <Button onClick={() => openCreate(from)}>
               <Plus />
               Dodaj zajecia
+            </Button>
+          )}
+          {canGenerate && (
+            <Button variant="destructive" onClick={() => setClearOpen(true)}>
+              <Trash2 />
+              Usun plan
             </Button>
           )}
           {canGenerate && (
@@ -546,10 +680,15 @@ export default function CalendarTab() {
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">Wszystkie sale</SelectItem>
-            {rooms.map((room) => (
-              <SelectItem key={room.id} value={room.id}>
-                {room.buildingName} · {room.number}
-              </SelectItem>
+            {roomsByFaculty.map((group) => (
+              <SelectGroup key={group.facultyName}>
+                <SelectLabel>{group.facultyName}</SelectLabel>
+                {group.items.map((room) => (
+                  <SelectItem key={room.id} value={room.id}>
+                    {room.buildingName} · {room.number}
+                  </SelectItem>
+                ))}
+              </SelectGroup>
             ))}
           </SelectContent>
         </Select>
@@ -560,10 +699,15 @@ export default function CalendarTab() {
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">Wszyscy prowadzacy</SelectItem>
-            {instructors?.map((instructor) => (
-              <SelectItem key={instructor.id} value={instructor.id}>
-                {`${instructor.title ? instructor.title + ' ' : ''}${instructor.firstName} ${instructor.lastName}`}
-              </SelectItem>
+            {instructorsByFaculty.map((group) => (
+              <SelectGroup key={group.facultyName}>
+                <SelectLabel>{group.facultyName}</SelectLabel>
+                {group.items.map((instructor) => (
+                  <SelectItem key={instructor.id} value={instructor.id}>
+                    {`${instructor.title ? instructor.title + ' ' : ''}${instructor.firstName} ${instructor.lastName}`}
+                  </SelectItem>
+                ))}
+              </SelectGroup>
             ))}
           </SelectContent>
         </Select>
@@ -621,6 +765,10 @@ export default function CalendarTab() {
             {visibleDates.map((date) => {
               const dateKey = toDateKey(date);
               const holidayName = holidayByDate.get(dateKey);
+              // Dzien poza zakresem semestru (przed poczatkiem albo po koncu kalendarza wydzialu).
+              const outOfRange =
+                semesterRange !== null &&
+                (dateKey < semesterRange.startKey || dateKey > semesterRange.endKey);
               const dayEntries = visibleEntries.filter(
                 (entry) => toDateKey(entry.date) === dateKey,
               );
@@ -631,11 +779,16 @@ export default function CalendarTab() {
                 <div key={dateKey} className="min-w-44 flex-1 border-r last:border-r-0">
                   <ColumnHeader
                     title={`${label} ${formatDayShort(date)}`}
-                    subtitle={holidayName}
+                    subtitle={holidayName ?? (outOfRange ? 'Poza semestrem' : undefined)}
                     highlighted={isToday}
                   />
                   <div
-                    className={cn('relative', holidayName && 'bg-muted/40')}
+                    className={cn(
+                      'relative',
+                      holidayName && 'bg-muted/40',
+                      // Poza semestrem — kolumna wyraznie szara; generator i tak nic tu nie rozpisze.
+                      outOfRange && 'bg-muted/60',
+                    )}
                     style={{ height: blocks.length * ROW_HEIGHT, minHeight: ROW_HEIGHT }}
                   >
                     {blocks.map((block, rowIndex) => (
@@ -643,15 +796,21 @@ export default function CalendarTab() {
                         key={block.id}
                         id={`${dateKey}::${block.id}`}
                         rowIndex={rowIndex}
-                        disabled={!canEdit}
+                        disabled={!canEdit || outOfRange}
                         availability={
-                          cellAvailability
-                            ? cellAvailability.get(`${dateKey}::${block.id}`)
-                              ? 'available'
-                              : 'unavailable'
-                            : undefined
+                          // Poza semestrem nie kolorujemy dostepnosci (czerwony/zielony) —
+                          // dzien ma zostac po prostu szary.
+                          outOfRange
+                            ? undefined
+                            : cellAvailability
+                              ? cellAvailability.get(`${dateKey}::${block.id}`)
+                                ? 'available'
+                                : 'unavailable'
+                              : undefined
                         }
-                        onClick={canEdit ? () => handleCellClick(dateKey, block.id) : undefined}
+                        onClick={
+                          canEdit && !outOfRange ? () => handleCellClick(dateKey, block.id) : undefined
+                        }
                       />
                     ))}
 
@@ -679,6 +838,9 @@ export default function CalendarTab() {
                             CLASS_COLORS[entry.classType],
                             // Odwolane zajecia zostaja widoczne, ale wyraznie wyciszone.
                             cancelled && 'opacity-50 line-through',
+                            // Termin poza zakresem semestru — szary (odbarwiony), bo i tak
+                            // nie nalezy do tego semestru.
+                            outOfRange && 'grayscale opacity-60',
                           )}
                           disabled={!canEdit}
                           onClick={() => setSelectedEntryId(entry.id)}
@@ -707,7 +869,9 @@ export default function CalendarTab() {
         </div>
       </DndContext>
 
-      {!entriesPending && entries?.length === 0 && (
+      {/* Liczymy po terminach widocznych, nie po calym tygodniu — inaczej przy trybie bez
+          rozpisanego planu siatka zostawala pusta bez zadnego wyjasnienia. */}
+      {!entriesPending && visibleEntries.length === 0 && (
         <Empty className="border">
           <EmptyHeader>
             <EmptyMedia variant="icon">
@@ -726,6 +890,18 @@ export default function CalendarTab() {
         entry={selectedEntry}
         onOpenChange={(open) => !open && setSelectedEntryId(null)}
         canEdit={canEdit}
+        semesterRange={semesterRange}
+      />
+
+      <ClearPlanDialog
+        open={clearOpen}
+        onOpenChange={setClearOpen}
+        academicYear={academicYear}
+        semesterType={semesterType}
+        studyMode={studyMode}
+        facultyId={facultyId}
+        scope={planScope}
+        defaultTarget="entries"
       />
 
       <GenerateDialog
@@ -735,6 +911,7 @@ export default function CalendarTab() {
         semesterType={semesterType}
         studyMode={studyMode}
         facultyId={facultyId}
+        scope={planScope}
       />
 
       <EntryCreateDialog

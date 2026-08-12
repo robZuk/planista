@@ -16,6 +16,9 @@ const editors = authorize('ADMIN', 'DEAN_OFFICE', 'INSTRUCTOR'); // wzorce i ter
 router.get('/templates', authenticate, authorize('ADMIN', 'DEAN_OFFICE', 'INSTRUCTOR'), templates.getAll);
 router.post('/templates', authenticate, editors, templates.create);
 router.put('/templates/:id', authenticate, editors, templates.update);
+// Hurtowe kasowanie calego wzorca tygodnia zostawiamy planistom — prowadzacy
+// moze usuwac swoje wzorce, ale pojedynczo.
+router.delete('/templates', authenticate, planners, templates.removeMany);
 router.delete('/templates/:id', authenticate, editors, templates.remove);
 router.get('/templates/summary/:curriculumVersionId', authenticate, viewAll, templates.getSummary);
 
@@ -27,6 +30,8 @@ router.get('/entries', authenticate, viewAll, entries.getAll);
 router.post('/entries', authenticate, editors, entries.create);
 router.put('/entries/:id/status', authenticate, editors, entries.updateStatus);
 router.post('/entries/:id/move', authenticate, editors, entries.move);
+// Czyszczenie calego kalendarza semestru — destrukcyjne jak generowanie, wiec planisci.
+router.delete('/entries', authenticate, planners, entries.removeMany);
 router.delete('/entries/:id', authenticate, editors, entries.remove);
 
 // ─── Kalendarz semestru ──────────────────────────────────────

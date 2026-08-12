@@ -23,7 +23,14 @@ model Faculty {
   instructors   Instructor[]
   fieldsOfStudy FieldOfStudy[]
   users         User[]
-  createdAt     DateTime       @default(now())
+
+  // Wydzial jest jednostka organizacyjna planu: wzorce, terminy i kalendarz
+  // semestru naleza do konkretnego wydzialu (kalendarz opcjonalnie — patrz nizej).
+  scheduleTemplates ScheduleTemplate[]
+  scheduleEntries   ScheduleEntry[]
+  semesterCalendars SemesterCalendar[]
+
+  createdAt DateTime @default(now())
 }
 
 model FieldOfStudy {
@@ -68,7 +75,6 @@ model CurriculumVersion {
   // Typ kolejnych semestrow wyliczamy naprzemiennie -> patrz lib/semester.ts (semesterTypeOf).
   startSemesterType SemesterType @default(WINTER)
 
-  isActive Boolean @default(true)
   specialization   Specialization    @relation(fields: [specializationId], references: [id])
   specializationId String
   entries          CurriculumEntry[]
@@ -190,6 +196,10 @@ model TimeBlock {
 
 // ═══════════════════════════════════════════════════════════════
 //  PLAN ZAJEC — wzorzec tygodnia (szablon)
+//
+//  Wzorzec i kalendarz to dwa ROZDZIELONE swiaty. Edycja wzorca nie rusza
+//  kalendarza, edycja kalendarza nie rusza wzorca. Jedyny punkt synchronizacji
+//  to generowanie semestru, ktore nadpisuje kalendarz wydzialu w calosci.
 // ═══════════════════════════════════════════════════════════════
 
 model ScheduleTemplate {
@@ -197,6 +207,12 @@ model ScheduleTemplate {
 
   curriculumEntry   CurriculumEntry @relation(fields: [curriculumEntryId], references: [id])
   curriculumEntryId String
+
+  // Wydzial wyprowadzany z siatki (curriculumEntry -> ... -> fieldOfStudy.facultyId)
+  // po stronie serwera; klient go nie podaje. Wzorzec nie moze zmienic siatki,
+  // wiec przynaleznosc do wydzialu jest niezmienna.
+  faculty   Faculty @relation(fields: [facultyId], references: [id])
+  facultyId String
 
   dayOfWeek DayOfWeek
 
@@ -227,6 +243,8 @@ model ScheduleTemplate {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([facultyId, academicYear, semester, studyMode])
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -246,15 +264,21 @@ model ScheduleEntry {
   endBlock     TimeBlock @relation("EntryEndBlock", fields: [endBlockId], references: [id])
   endBlockId   String
 
-  template   ScheduleTemplate? @relation(fields: [templateId], references: [id])
-  templateId String? // null dla zajec-odrobien dodanych recznie
+  // SetNull, bo usuniecie wzorca NIE rusza kalendarza — termin traci tylko powiazanie
+  // z seria i znika dopiero przy najblizszym generowaniu semestru.
+  template   ScheduleTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  templateId String? // null dla zajec-odrobien dodanych recznie i dla osieroconych
 
-  // Recznie zmieniony pojedynczy termin (przeniesienie "tylko ten" / zmiana statusu). Odczepiony
-  // termin nie jest juz ruszany przez operacje na calej serii (przeniesienie scope ALL).
+  // Recznie zmieniony pojedynczy termin: przeniesienie "tylko ten" (data, godzina, sala lub
+  // prowadzacy) albo zmiana statusu. Odczepiony termin jest POMIJANY przez operacje na calej
+  // serii (przeniesienie scope ALL), ale NIE przezywa generowania semestru — pelne nadpisanie
+  // kasuje go jak kazdy inny termin i rozpisuje przedmiot od nowa z wzorca.
   detached Boolean @default(false)
-  // Pierwotny slot sprzed pierwszego recznego przeniesienia — zeby generator nie odtworzyl
-  // "luki" po przeniesionym terminie jako duplikatu. null, dopoki termin nie zostal przesuniety.
-  originalDate DateTime?
+
+  // Wydzial wyprowadzany z siatki po stronie serwera — takze dla terminow dodanych
+  // recznie (templateId = null). To po nim generator kasuje kalendarz wydzialu.
+  faculty   Faculty @relation(fields: [facultyId], references: [id])
+  facultyId String
 
   room   Room   @relation(fields: [roomId], references: [id])
   roomId String
@@ -270,6 +294,8 @@ model ScheduleEntry {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([facultyId, date])
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -286,7 +312,15 @@ model SemesterCalendar {
   teachingWeeks Int
   createdAt     DateTime     @default(now())
 
-  @@unique([academicYear, semesterType, studyMode])
+  // Kalendarz ZAWSZE nalezy do wydzialu. Wariant ogolnouczelniany (facultyId = null)
+  // zostal usuniety: definiowal zasieg przez brak ("wydzialy bez wlasnego"), psul
+  // unique ponizej (w Postgresie NULL != NULL) i wymagal osobnej galezi w polowie
+  // kodu planu. Wspolne daty dla calej uczelni zakladamy hurtem — po wierszu na
+  // wydzial — zamiast jednym wierszem-widmem.
+  faculty   Faculty @relation(fields: [facultyId], references: [id])
+  facultyId String
+
+  @@unique([academicYear, semesterType, studyMode, facultyId])
 }
 
 model PublicHoliday {

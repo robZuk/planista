@@ -16,9 +16,11 @@ export function rangesOverlap(aStart: number, aEnd: number, bStart: number, bEnd
 }
 
 // ─── Typy sal dopuszczalne dla typu zajec ────────────────────
+// SPORTS tylko przy cwiczeniach — WF idzie w siatce wlasnie jako ta forma,
+// a bez tego wpisu hala i silownia byly nieuzywalne w calym systemie.
 export const roomTypeMap: Record<ClassType, RoomType[]> = {
   LECTURE: ['LECTURE', 'EXERCISE'],
-  EXERCISE: ['EXERCISE', 'LECTURE'],
+  EXERCISE: ['EXERCISE', 'LECTURE', 'SPORTS'],
   LAB: ['LAB', 'COMPUTER_LAB'],
   PROJECT: ['EXERCISE', 'COMPUTER_LAB', 'SEMINAR'],
   SEMINAR: ['SEMINAR', 'EXERCISE'],

@@ -18,7 +18,9 @@ import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from '@/c
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
@@ -32,6 +34,7 @@ import { getScheduleErrorMessage } from '@/lib/scheduleErrors';
 import {
   CLASS_FULL_LABELS,
   CLASS_TYPES,
+  MAX_TEMPLATE_BLOCKS,
   ROOM_TYPES_FOR_CLASS,
   WEEK_TYPE_LABELS,
   daysForMode,
@@ -47,8 +50,6 @@ import type {
   WeekType,
 } from '@/types';
 
-const MAX_BLOCKS = 4;
-
 const templateSchema = z.object({
   curriculumEntryId: z.string().min(1, 'Wybierz przedmiot z siatki'),
   classType: z.enum(CLASS_TYPES as [ClassType, ...ClassType[]]),
@@ -57,11 +58,27 @@ const templateSchema = z.object({
   studentGroupId: z.string().min(1, 'Wybierz grupe'),
   dayOfWeek: z.string().min(1, 'Wybierz dzien'),
   startBlockId: z.string().min(1, 'Wybierz godzine rozpoczecia'),
-  blockCount: z.number().int().min(1).max(MAX_BLOCKS),
+  blockCount: z.number().int().min(1).max(MAX_TEMPLATE_BLOCKS),
   weekType: z.enum(['EVERY', 'EVEN', 'ODD']),
 });
 
 type TemplateValues = z.infer<typeof templateSchema>;
+
+/**
+ * Wstepne wypelnienie formularza. Klikniecie w pusta komorke siatki daje sam termin;
+ * upuszczenie pozycji z listy "do zaplanowania" — dodatkowo przedmiot, forme, grupe,
+ * prowadzacego i sugerowana dlugosc. Sali nie da sie wywnioskowac z siatki, wiec
+ * zostaje pusta w obu przypadkach.
+ */
+export interface TemplatePrefill {
+  dayOfWeek: DayOfWeek;
+  startBlockId: string;
+  curriculumEntryId?: string;
+  classType?: ClassType;
+  studentGroupId?: string;
+  instructorId?: string;
+  blockCount?: number;
+}
 
 interface Props {
   open: boolean;
@@ -71,8 +88,7 @@ interface Props {
   studyMode: StudyMode;
   curriculumEntries: CurriculumEntry[];
   groups: StudentGroup[];
-  /** Wypelnienie z klikniecia w pusta komorke siatki. */
-  prefill?: { dayOfWeek: DayOfWeek; startBlockId: string } | null;
+  prefill?: TemplatePrefill | null;
   editing?: ScheduleTemplate | null;
 }
 
@@ -96,7 +112,12 @@ export function TemplateDialog({
   const rooms = useMemo(
     () =>
       buildings?.flatMap((building) =>
-        (building.rooms ?? []).map((room) => ({ ...room, buildingName: building.name })),
+        (building.rooms ?? []).map((room) => ({
+          ...room,
+          buildingName: building.name,
+          facultyId: building.faculty?.id ?? null,
+          facultyName: building.faculty?.name ?? null,
+        })),
       ) ?? [],
     [buildings],
   );
@@ -134,14 +155,16 @@ export function TemplateDialog({
       });
     } else {
       form.reset({
-        curriculumEntryId: '',
-        classType: 'LECTURE',
-        instructorId: '',
+        curriculumEntryId: prefill?.curriculumEntryId ?? '',
+        classType: prefill?.classType ?? 'LECTURE',
+        instructorId: prefill?.instructorId ?? '',
+        // Sala zostaje pusta takze przy przeciagnieciu z backlogu — to jedyna rzecz,
+        // ktorej siatka nie okresla, wiec musi ja swiadomie wskazac planista.
         roomId: '',
-        studentGroupId: '',
+        studentGroupId: prefill?.studentGroupId ?? '',
         dayOfWeek: prefill?.dayOfWeek ?? daysForMode(studyMode)[0]!.key,
         startBlockId: prefill?.startBlockId ?? '',
-        blockCount: 1,
+        blockCount: prefill?.blockCount ?? 1,
         weekType: 'EVERY',
       });
     }
@@ -160,6 +183,43 @@ export function TemplateDialog({
   // Sale zawezone do typow pasujacych do zajec (lustro reguly z backendu).
   const allowedRoomTypes = ROOM_TYPES_FOR_CLASS[selectedClassType];
   const availableRooms = rooms.filter((room) => allowedRoomTypes.includes(room.type));
+
+  // Sale pogrupowane po wydziale (przez budynek); sale bez wydzialu -> sekcja na koncu.
+  const roomsByFaculty = useMemo(() => {
+    const map = new Map<string, { facultyName: string; items: typeof availableRooms }>();
+    for (const room of availableRooms) {
+      const key = room.facultyId ?? '__none__';
+      if (!map.has(key)) map.set(key, { facultyName: room.facultyName ?? 'Bez wydzialu', items: [] });
+      map.get(key)!.items.push(room);
+    }
+    return [...map.entries()]
+      .sort(([keyA, a], [keyB, b]) => {
+        if (keyA === '__none__') return 1;
+        if (keyB === '__none__') return -1;
+        return a.facultyName.localeCompare(b.facultyName, 'pl');
+      })
+      .map(([, group]) => group);
+  }, [availableRooms]);
+
+  // Prowadzacy pogrupowani po wydziale; bez wydzialu -> sekcja na koncu.
+  const instructorsByFaculty = useMemo(() => {
+    type Ins = NonNullable<typeof instructors>[number];
+    const map = new Map<string, { facultyName: string; items: Ins[] }>();
+    for (const instructor of instructors ?? []) {
+      const key = instructor.faculty?.id ?? '__none__';
+      if (!map.has(key)) {
+        map.set(key, { facultyName: instructor.faculty?.name ?? 'Bez wydzialu', items: [] });
+      }
+      map.get(key)!.items.push(instructor);
+    }
+    return [...map.entries()]
+      .sort(([keyA, a], [keyB, b]) => {
+        if (keyA === '__none__') return 1;
+        if (keyB === '__none__') return -1;
+        return a.facultyName.localeCompare(b.facultyName, 'pl');
+      })
+      .map(([, group]) => group);
+  }, [instructors]);
 
   const saveMutation = useMutation({
     mutationFn: (values: TemplateValues) => {
@@ -197,9 +257,12 @@ export function TemplateDialog({
   const deleteMutation = useMutation({
     mutationFn: () => deleteTemplate(editing!.id),
     onSuccess: () => {
-      toast.success('Wzorzec usuniety wraz z wygenerowanymi terminami');
+      toast.success('Wzorzec usuniety. Kalendarz bez zmian — terminy znikna przy generowaniu.');
       void queryClient.invalidateQueries({ queryKey: ['templates'] });
       void queryClient.invalidateQueries({ queryKey: ['coverage'] });
+      // Terminy zostaja, ale traca powiazanie z seria (templateId -> null),
+      // a to widac w kalendarzu — trzeba je przeladowac.
+      void queryClient.invalidateQueries({ queryKey: ['schedule-entries'] });
       onOpenChange(false);
     },
     onError: (error) => toast.error(getScheduleErrorMessage(error)),
@@ -213,8 +276,8 @@ export function TemplateDialog({
         <DialogHeader>
           <DialogTitle>{editing ? 'Edytuj zajecia' : 'Nowe zajecia we wzorcu'}</DialogTitle>
           <DialogDescription>
-            Wzorzec opisuje jeden powtarzalny termin w tygodniu. Konkretne daty powstaja dopiero
-            przy generowaniu semestru.
+            Wzorzec opisuje jeden powtarzalny termin w tygodniu. Zmiany nie ruszaja istniejacego
+            kalendarza — wchodza do niego dopiero przy generowaniu semestru.
           </DialogDescription>
         </DialogHeader>
 
@@ -327,10 +390,15 @@ export function TemplateDialog({
                         <SelectValue placeholder="Wybierz" />
                       </SelectTrigger>
                       <SelectContent>
-                        {instructors?.map((instructor) => (
-                          <SelectItem key={instructor.id} value={instructor.id}>
-                            {`${instructor.title ?? ''} ${instructor.firstName} ${instructor.lastName}`.trim()}
-                          </SelectItem>
+                        {instructorsByFaculty.map((group) => (
+                          <SelectGroup key={group.facultyName}>
+                            <SelectLabel>{group.facultyName}</SelectLabel>
+                            {group.items.map((instructor) => (
+                              <SelectItem key={instructor.id} value={instructor.id}>
+                                {`${instructor.title ?? ''} ${instructor.firstName} ${instructor.lastName}`.trim()}
+                              </SelectItem>
+                            ))}
+                          </SelectGroup>
                         ))}
                       </SelectContent>
                     </Select>
@@ -350,10 +418,15 @@ export function TemplateDialog({
                         <SelectValue placeholder="Wybierz" />
                       </SelectTrigger>
                       <SelectContent>
-                        {availableRooms.map((room) => (
-                          <SelectItem key={room.id} value={room.id}>
-                            {room.buildingName} · {room.number} ({room.capacity} os.)
-                          </SelectItem>
+                        {roomsByFaculty.map((group) => (
+                          <SelectGroup key={group.facultyName}>
+                            <SelectLabel>{group.facultyName}</SelectLabel>
+                            {group.items.map((room) => (
+                              <SelectItem key={room.id} value={room.id}>
+                                {room.buildingName} · {room.number} ({room.capacity} os.)
+                              </SelectItem>
+                            ))}
+                          </SelectGroup>
                         ))}
                       </SelectContent>
                     </Select>
@@ -429,7 +502,7 @@ export function TemplateDialog({
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        {Array.from({ length: MAX_BLOCKS }, (_, i) => i + 1).map((count) => (
+                        {Array.from({ length: MAX_TEMPLATE_BLOCKS }, (_, i) => i + 1).map((count) => (
                           <SelectItem key={count} value={String(count)}>
                             {count}
                           </SelectItem>

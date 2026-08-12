@@ -5,9 +5,17 @@ import { isNotFoundError } from '../lib/prismaErrors';
 import { validateTemplate, isBadRequestError, type TemplateValidationDto } from '../services/scheduleValidation';
 import { getCallerInstructorId } from '../lib/callerInstructor';
 import { getCallerFacultyId } from '../lib/callerFaculty';
+import { resolveFacultyId } from '../lib/curriculumFaculty';
 
 const templateInclude = {
-  curriculumEntry: { include: { subject: { select: { id: true, name: true } } } },
+  // startSemesterType idzie do klienta, bo bez niego podglad kolizji na siatce nie
+  // odrozni wzorca zimowego od letniego — patrz sameSemesterType w scheduleValidation.
+  curriculumEntry: {
+    include: {
+      subject: { select: { id: true, name: true } },
+      curriculumVersion: { select: { startSemesterType: true } },
+    },
+  },
   room: { select: { id: true, number: true, type: true, capacity: true, building: { select: { id: true, name: true } } } },
   instructor: { select: { id: true, firstName: true, lastName: true, title: true } },
   studentGroup: { select: { id: true, name: true, parentGroupId: true } },
@@ -27,16 +35,13 @@ export async function getAll(req: Request, res: Response): Promise<void> {
           ? String(req.query.facultyId)
           : undefined;
 
-    // Filtry siegajace w glab siatki (specjalnosc / kierunek / wydzial) trafiaja pod ten sam
-    // klucz `curriculumEntry`, wiec skladamy je przez AND — inaczej nadpisywalyby sie nawzajem.
+    // Specjalnosc i kierunek nadal siegaja w glab siatki, ale wydzial ma juz wlasna
+    // kolumne — filtrujemy po niej wprost, bez zagniezdzonego joina.
     const curriculumFilters = [];
     if (specializationId) {
       curriculumFilters.push({ curriculumEntry: { curriculumVersion: { specializationId: String(specializationId) } } });
     } else if (fieldOfStudyId) {
       curriculumFilters.push({ curriculumEntry: { curriculumVersion: { specialization: { fieldOfStudyId: String(fieldOfStudyId) } } } });
-    }
-    if (facultyId) {
-      curriculumFilters.push({ curriculumEntry: { curriculumVersion: { specialization: { fieldOfStudy: { facultyId } } } } });
     }
 
     const data = await prisma.scheduleTemplate.findMany({
@@ -45,6 +50,7 @@ export async function getAll(req: Request, res: Response): Promise<void> {
         ...(academicYear ? { academicYear: String(academicYear) } : {}),
         ...(studyMode ? { studyMode: studyMode as StudyMode } : {}),
         ...(studentGroupId ? { studentGroupId: String(studentGroupId) } : {}),
+        ...(facultyId ? { facultyId } : {}),
         ...(curriculumFilters.length > 0 ? { AND: curriculumFilters } : {}),
       },
       include: templateInclude,
@@ -89,6 +95,21 @@ export async function create(req: Request, res: Response): Promise<void> {
       }
     }
 
+    // Wydzial bierzemy z siatki, nie z zadania — klient nie moze go podstawic.
+    const facultyId = await resolveFacultyId(body.curriculumEntryId);
+    if (!facultyId) {
+      res.status(400).json({ error: 'Wpis siatki nie istnieje' });
+      return;
+    }
+    // Dziekanat planuje wylacznie w obrebie swojego wydzialu.
+    if (req.user!.role === 'DEAN_OFFICE') {
+      const myFacultyId = await getCallerFacultyId(req.user!.id);
+      if (myFacultyId !== facultyId) {
+        res.status(403).json({ error: 'Mozesz planowac tylko w obrebie swojego wydzialu' });
+        return;
+      }
+    }
+
     const dto: TemplateValidationDto = {
       classType: body.classType,
       roomId: body.roomId,
@@ -98,6 +119,8 @@ export async function create(req: Request, res: Response): Promise<void> {
       startBlockId: body.startBlockId,
       endBlockId: body.endBlockId,
       academicYear: body.academicYear,
+      semester: body.semester,
+      curriculumEntryId: body.curriculumEntryId,
       weekType: body.weekType ?? 'EVERY',
       studyMode: body.studyMode ?? 'FULL_TIME',
     };
@@ -110,6 +133,7 @@ export async function create(req: Request, res: Response): Promise<void> {
     const data = await prisma.scheduleTemplate.create({
       data: {
         curriculumEntryId: body.curriculumEntryId,
+        facultyId,
         classType: body.classType,
         roomId: body.roomId,
         instructorId: body.instructorId,
@@ -162,6 +186,16 @@ export async function update(req: Request, res: Response): Promise<void> {
         return;
       }
     }
+    if (req.user!.role === 'DEAN_OFFICE') {
+      const myFacultyId = await getCallerFacultyId(req.user!.id);
+      if (myFacultyId !== existing.facultyId) {
+        res.status(403).json({ error: 'Mozesz edytowac tylko wzorce swojego wydzialu' });
+        return;
+      }
+    }
+
+    // Uwaga: body nie zawiera curriculumEntryId, wiec wydzial wzorca jest niezmienny —
+    // facultyId nie moze sie rozjechac z siatka.
 
     const dto: TemplateValidationDto = {
       classType: body.classType ?? existing.classType,
@@ -172,6 +206,9 @@ export async function update(req: Request, res: Response): Promise<void> {
       startBlockId: body.startBlockId ?? existing.startBlockId,
       endBlockId: body.endBlockId ?? existing.endBlockId,
       academicYear: existing.academicYear,
+      // Semestr i siatka sa niezmienne przy edycji (body ich nie zawiera).
+      semester: existing.semester,
+      curriculumEntryId: existing.curriculumEntryId,
       weekType: body.weekType ?? existing.weekType,
       studyMode: body.studyMode ?? existing.studyMode,
       excludeId: existing.id,
@@ -222,17 +259,63 @@ export async function remove(req: Request, res: Response): Promise<void> {
         return;
       }
     }
-    // Usun wygenerowane z tego wzorca terminy, potem wzorzec.
-    await prisma.$transaction([
-      prisma.scheduleEntry.deleteMany({ where: { templateId: req.params.id } }),
-      prisma.scheduleTemplate.delete({ where: { id: req.params.id } }),
-    ]);
+    if (req.user!.role === 'DEAN_OFFICE') {
+      const myFacultyId = await getCallerFacultyId(req.user!.id);
+      if (myFacultyId !== existing.facultyId) {
+        res.status(403).json({ error: 'Mozesz usuwac tylko wzorce swojego wydzialu' });
+        return;
+      }
+    }
+    // Kalendarz zostaje nietkniety — wygenerowane terminy traca tylko powiazanie
+    // z seria (templateId -> NULL) i znikna przy najblizszym generowaniu semestru.
+    await prisma.scheduleTemplate.delete({ where: { id: req.params.id } });
     res.json({ message: 'Wzorzec usuniety' });
   } catch (error) {
     if (isNotFoundError(error)) {
       res.status(404).json({ error: 'Wzorzec nie znaleziony' });
       return;
     }
+    console.error(error);
+    res.status(500).json({ error: 'Blad serwera' });
+  }
+}
+
+/**
+ * Kasowanie calego wzorca tygodnia naraz.
+ *
+ * Zakres wskazujemy wprost lista id, a nie filtrami — widok sklada wzorce z kilku
+ * warunkow (rok, tryb, pora semestru liczona z naboru siatki), wiec filtr powtorzony
+ * po stronie serwera latwo rozjechalby sie z tym, co planista widzi na ekranie.
+ * Kalendarz zostaje nietkniety — jak przy usuwaniu pojedynczego wzorca.
+ */
+export async function removeMany(req: Request, res: Response): Promise<void> {
+  try {
+    const { ids } = req.body as { ids?: string[] };
+    if (!ids?.length) {
+      res.status(400).json({ error: 'Brakujace pole: ids' });
+      return;
+    }
+
+    const existing = await prisma.scheduleTemplate.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, facultyId: true },
+    });
+
+    // Dziekanat czysci wylacznie swoj wydzial — jeden obcy wzorzec na liscie
+    // przerywa calosc, zeby nie kasowac "polowy" tego, o co poproszono.
+    if (req.user!.role === 'DEAN_OFFICE') {
+      const myFacultyId = await getCallerFacultyId(req.user!.id);
+      if (existing.some((template) => template.facultyId !== myFacultyId)) {
+        res.status(403).json({ error: 'Mozesz usuwac tylko wzorce swojego wydzialu' });
+        return;
+      }
+    }
+
+    const { count } = await prisma.scheduleTemplate.deleteMany({
+      where: { id: { in: existing.map((template) => template.id) } },
+    });
+    res.json({ data: { deleted: count }, message: `Usunieto wzorce tygodnia: ${count}` });
+  } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Blad serwera' });
   }

@@ -1,23 +1,57 @@
 import type { Request, Response } from 'express';
-import type { ClassType, EntryStatus } from '@prisma/client';
+import type { ClassType, EntryStatus, SemesterType, StudyMode } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { isNotFoundError } from '../lib/prismaErrors';
 import { validateEntry, isBadRequestError, checkRoomType } from '../services/scheduleValidation';
 import { getGroupFamilyIds } from '../lib/groupFamily';
 import { getCallerInstructorId } from '../lib/callerInstructor';
-import { rangesOverlap, dayNumToEnum, checkTimeWindow, dateToStr } from '../lib/scheduleTime';
+import { getCallerFacultyId } from '../lib/callerFaculty';
+import { resolveFacultyId } from '../lib/curriculumFaculty';
+import { resolveSemesterRange } from '../lib/semesterCalendar';
+import { semesterTypeOf } from '../lib/semester';
+import { rangesOverlap, checkTimeWindow, dateToStr } from '../lib/scheduleTime';
+
+/**
+ * Granice semestru (klucze RRRR-MM-DD) dla terminu — z kalendarza wydzialu, a gdy go
+ * nie ma, z dat wyliczonych z roku. Sluzy do pilnowania, ze reczne przeniesienie/dodanie
+ * nie wyrzuci zajec poza semestr (generator i tak rozpisuje plan tylko w tym zakresie).
+ * null = nie da sie wyznaczyc (brak wpisu siatki) — wtedy nie blokujemy.
+ */
+async function semesterKeysForEntry(
+  curriculumEntryId: string,
+  facultyId: string,
+): Promise<{ startKey: string; endKey: string } | null> {
+  const ce = await prisma.curriculumEntry.findUnique({
+    where: { id: curriculumEntryId },
+    select: {
+      semester: true,
+      curriculumVersion: { select: { academicYear: true, studyMode: true, startSemesterType: true } },
+    },
+  });
+  if (!ce) return null;
+  const semesterType = semesterTypeOf(ce.curriculumVersion.startSemesterType, ce.semester);
+  const range = await resolveSemesterRange(
+    ce.curriculumVersion.academicYear,
+    semesterType,
+    ce.curriculumVersion.studyMode,
+    facultyId,
+  );
+  return { startKey: dateToStr(range.startDate), endKey: dateToStr(range.endDate) };
+}
 
 const entryInclude = {
   room: { select: { id: true, number: true, type: true, building: { select: { id: true, name: true } } } },
   instructor: { select: { id: true, firstName: true, lastName: true, title: true } },
   studentGroup: { select: { id: true, name: true } },
   // semester + specjalnosc (przez wersje siatki) — do filtrow w widoku kalendarza.
+  // studyMode bierzemy z siatki, a nie z wzorca: termin dodany recznie ma template = null,
+  // a filtr trybu w kalendarzu musi dzialac tak samo dla obu rodzajow terminow.
   curriculumEntry: {
     select: {
       id: true,
       semester: true,
       subject: { select: { id: true, name: true } },
-      curriculumVersion: { select: { specializationId: true } },
+      curriculumVersion: { select: { specializationId: true, studyMode: true } },
     },
   },
   template: { select: { id: true, dayOfWeek: true, weekType: true, studyMode: true } },
@@ -32,12 +66,21 @@ export async function getAll(req: Request, res: Response): Promise<void> {
     if (from) dateFilter.gte = new Date(String(from) + 'T00:00:00.000Z');
     if (to) dateFilter.lte = new Date(String(to) + 'T23:59:59.999Z');
 
+    // Dziekanat widzi tylko wlasny wydzial — nadpisujemy ewentualny parametr z zapytania.
+    const facultyId =
+      req.user!.role === 'DEAN_OFFICE'
+        ? await getCallerFacultyId(req.user!.id)
+        : req.query.facultyId
+          ? String(req.query.facultyId)
+          : undefined;
+
     const data = await prisma.scheduleEntry.findMany({
       where: {
         ...(Object.keys(dateFilter).length ? { date: dateFilter } : {}),
         ...(studentGroupId ? { studentGroupId: String(studentGroupId) } : {}),
         ...(instructorId ? { instructorId: String(instructorId) } : {}),
         ...(status ? { status: status as EntryStatus } : {}),
+        ...(facultyId ? { facultyId } : {}),
       },
       include: entryInclude,
       // W jednym bloku czasowym siedzi zwykle kilka terminow naraz (rozne grupy i sale),
@@ -90,6 +133,31 @@ export async function create(req: Request, res: Response): Promise<void> {
       }
     }
 
+    // Wydzial bierzemy z siatki takze dla terminu recznego — to po nim generator
+    // rozpozna, ze ma go skasowac przy nadpisywaniu kalendarza wydzialu.
+    const facultyId = await resolveFacultyId(body.curriculumEntryId);
+    if (!facultyId) {
+      res.status(400).json({ error: 'Wpis siatki nie istnieje' });
+      return;
+    }
+    if (req.user!.role === 'DEAN_OFFICE') {
+      const myFacultyId = await getCallerFacultyId(req.user!.id);
+      if (myFacultyId !== facultyId) {
+        res.status(403).json({ error: 'Mozesz dodawac terminy tylko w obrebie swojego wydzialu' });
+        return;
+      }
+    }
+
+    // Termin musi miescic sie w zakresie semestru wydzialu — inaczej wisialby poza planem.
+    const keys = await semesterKeysForEntry(body.curriculumEntryId, facultyId);
+    if (keys) {
+      const dayKey = dateToStr(new Date(body.date));
+      if (dayKey < keys.startKey || dayKey > keys.endKey) {
+        res.status(400).json({ error: 'DATE_OUTSIDE_SEMESTER', details: { startDate: keys.startKey, endDate: keys.endKey } });
+        return;
+      }
+    }
+
     const error = await validateEntry({
       date: new Date(body.date),
       roomId: body.roomId,
@@ -113,6 +181,7 @@ export async function create(req: Request, res: Response): Promise<void> {
         instructorId: body.instructorId,
         studentGroupId: body.studentGroupId ?? null,
         curriculumEntryId: body.curriculumEntryId,
+        facultyId,
         startBlockId: body.startBlockId,
         endBlockId: body.endBlockId,
         templateId: null,
@@ -166,6 +235,7 @@ export async function updateStatus(req: Request, res: Response): Promise<void> {
 
 export async function remove(req: Request, res: Response): Promise<void> {
   try {
+    const { scope } = (req.body ?? {}) as { scope?: 'ONE' | 'ALL' };
     const existing = await prisma.scheduleEntry.findUnique({ where: { id: req.params.id } });
     if (!existing) {
       res.status(404).json({ error: 'Termin nie znaleziony' });
@@ -178,6 +248,34 @@ export async function remove(req: Request, res: Response): Promise<void> {
         return;
       }
     }
+
+    // scope ALL — kasujemy ten termin i wszystkie KOLEJNE z tej samej serii (wzorca),
+    // pomijajac terminy odczepione (detached). Semantyka lustrzana do przenoszenia serii
+    // w move(): seria = wspolny templateId, od daty tego terminu w gore. Sam klikniety
+    // termin usuwamy zawsze (galaz `id`), nawet jesli jest odczepiony.
+    if (scope === 'ALL') {
+      if (!existing.templateId) {
+        res.status(400).json({ error: 'Brak serii — ten termin nie pochodzi z wzorca' });
+        return;
+      }
+      const fromDate = new Date(existing.date);
+      fromDate.setUTCHours(0, 0, 0, 0);
+      const seriesWhere = {
+        OR: [
+          { id: existing.id },
+          { templateId: existing.templateId, date: { gte: fromDate }, detached: false },
+        ],
+      };
+      // Instruktor kasuje tylko wlasne terminy — takze w obrebie serii.
+      const where =
+        req.user!.role === 'INSTRUCTOR'
+          ? { AND: [seriesWhere, { instructorId: existing.instructorId }] }
+          : seriesWhere;
+      const { count } = await prisma.scheduleEntry.deleteMany({ where });
+      res.json({ message: `Usunieto ${count} terminow z serii` });
+      return;
+    }
+
     await prisma.scheduleEntry.delete({ where: { id: req.params.id } });
     res.json({ message: 'Termin usuniety' });
   } catch (error) {
@@ -191,10 +289,116 @@ export async function remove(req: Request, res: Response): Promise<void> {
 }
 
 /**
+ * Wyczyszczenie kalendarza semestru dla jednego wydzialu.
+ *
+ * Zakres dat bierzemy z tego samego zrodla co generator (kalendarz wydzialu →
+ * daty wyliczone z roku), a kasujemy terminy wydzialu z tego okna
+ * — takze reczne i odwolane. Tak samo jak nadpisanie przez generator, tyle ze bez
+ * tworzenia czegokolwiek w zamian. Wzorce tygodnia zostaja nietkniete.
+ *
+ * Zawezenie do trybu studiow tez jest wspolne z generatorem: plan drugiego trybu
+ * stoi na tych samych datach i nie ma go po co ruszac.
+ *
+ * Operacja jest destrukcyjna, wiec dotyczy dokladnie jednego wydzialu — nie ma
+ * wariantu "wszystkie wydzialy naraz".
+ */
+export async function removeMany(req: Request, res: Response): Promise<void> {
+  try {
+    const {
+      academicYear,
+      semesterType,
+      studyMode,
+      facultyId: bodyFacultyId,
+      scope,
+    } = req.body as {
+      academicYear?: string;
+      semesterType?: SemesterType;
+      studyMode?: StudyMode;
+      facultyId?: string;
+      scope?: { fieldOfStudyId?: string; specializationId?: string; semester?: number };
+    };
+
+    if (!academicYear || !semesterType || !studyMode) {
+      res.status(400).json({ error: 'Brakujace pola: academicYear, semesterType, studyMode' });
+      return;
+    }
+
+    const facultyId =
+      req.user!.role === 'DEAN_OFFICE' ? await getCallerFacultyId(req.user!.id) : bodyFacultyId;
+    if (!facultyId) {
+      res.status(400).json({
+        error: 'FACULTY_REQUIRED',
+        details: { message: 'Czyszczenie kalendarza wymaga wskazania jednego wydzialu' },
+      });
+      return;
+    }
+
+    const range = await resolveSemesterRange(academicYear, semesterType, studyMode, facultyId);
+    // Granice kalendarza stoja o polnocy, a terminy w poludnie UTC — rozciagamy do
+    // pelnych dob, zeby nie ominac zajec z pierwszego i ostatniego dnia semestru
+    // (identycznie jak generator).
+    const rangeStart = new Date(range.startDate);
+    rangeStart.setUTCHours(0, 0, 0, 0);
+    const rangeEnd = new Date(range.endDate);
+    rangeEnd.setUTCHours(23, 59, 59, 999);
+    const dateRange = { gte: rangeStart, lte: rangeEnd };
+    // Tryb studiow wyprowadzamy z siatki (termin go nie przechowuje) — inaczej czyszczenie
+    // planu niestacjonarnego zabieralo tez stacjonarny z tych samych dat. Jak w generatorze,
+    // wraz z opcjonalnym zawezeniem na kierunek / specjalnosc / semestr. Jeden warunek na
+    // `curriculumEntry`, bo powtorzony klucz relacji nadpisalby poprzedni.
+    const semesterScope = Number.isInteger(scope?.semester) ? scope!.semester : undefined;
+    const where = {
+      facultyId,
+      date: dateRange,
+      curriculumEntry: {
+        ...(semesterScope ? { semester: semesterScope } : {}),
+        curriculumVersion: {
+          is: {
+            studyMode,
+            ...(scope?.specializationId ? { specializationId: scope.specializationId } : {}),
+            ...(scope?.fieldOfStudyId && !scope.specializationId
+              ? { specialization: { is: { fieldOfStudyId: scope.fieldOfStudyId } } }
+              : {}),
+          },
+        },
+      },
+    };
+
+    const doomed = await prisma.scheduleEntry.findMany({
+      where,
+      select: { templateId: true },
+    });
+    const manual = doomed.filter((entry) => entry.templateId === null).length;
+
+    const { count } = await prisma.scheduleEntry.deleteMany({ where });
+
+    res.json({
+      data: {
+        deleted: { total: count, manual },
+        range: {
+          startDate: range.startDate.toISOString(),
+          endDate: range.endDate.toISOString(),
+          source: range.source,
+        },
+      },
+      message:
+        `Wyczyszczono kalendarz wydzialu: usunieto ${count} terminow` +
+        `${manual > 0 ? ` (w tym ${manual} recznych)` : ''}`,
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Blad serwera' });
+  }
+}
+
+/**
  * Przeniesienie terminu (drag&drop).
  *  scope 'ONE' — tylko ten termin (nowa data + zakres blokow + opc. sala/prowadzacy).
- *  scope 'ALL' — caly semestr: aktualizuje WZORZEC i przesuwa przyszle terminy na
- *                nowy dzien tygodnia + bloki (pomija dni wolne).
+ *  scope 'ALL' — wszystkie przyszle terminy tej serii, przesuniete na nowy dzien
+ *                tygodnia + bloki (pomija dni wolne i terminy odczepione).
+ *
+ * Obie operacje sa CZYSTO KALENDARZOWE — wzorzec tygodnia zostaje nietkniety.
+ * Przy najblizszym generowaniu semestru kalendarz i tak powstanie od nowa z wzorcow.
  */
 export async function move(req: Request, res: Response): Promise<void> {
   try {
@@ -231,6 +435,15 @@ export async function move(req: Request, res: Response): Promise<void> {
 
     // ─── scope ONE ──────────────────────────────────────────
     if (scope === 'ONE') {
+      // Nie pozwalamy wypchnac terminu poza zakres semestru wydzialu.
+      const keys = await semesterKeysForEntry(existing.curriculumEntryId, existing.facultyId);
+      if (keys) {
+        const dayKey = dateToStr(new Date(newDate));
+        if (dayKey < keys.startKey || dayKey > keys.endKey) {
+          res.status(400).json({ error: 'DATE_OUTSIDE_SEMESTER', details: { startDate: keys.startKey, endDate: keys.endKey } });
+          return;
+        }
+      }
       const error = await validateEntry({
         date: new Date(newDate),
         roomId: targetRoomId,
@@ -254,11 +467,9 @@ export async function move(req: Request, res: Response): Promise<void> {
           endBlockId: newEndBlockId,
           roomId: targetRoomId,
           instructorId: targetInstructorId,
-          // Reczne przeniesienie pojedynczego terminu odczepia go od serii. originalDate
-          // zapamietuje pierwotny slot (tylko za pierwszym razem), zeby generator nie odtworzyl
-          // powstalej "luki" jako duplikatu.
+          // Reczne przeniesienie pojedynczego terminu odczepia go od serii — kolejne
+          // przesuniecie calej serii (scope ALL) juz go pominie.
           detached: true,
-          originalDate: existing.originalDate ?? existing.date,
         },
         include: entryInclude,
       });
@@ -267,8 +478,10 @@ export async function move(req: Request, res: Response): Promise<void> {
     }
 
     // ─── scope ALL ──────────────────────────────────────────
+    // Seria = terminy dzielace wzorzec. Termin reczny (albo osierocony po usunieciu
+    // wzorca) nie nalezy do zadnej serii, wiec nie ma czego przesuwac.
     if (!existing.templateId) {
-      res.status(400).json({ error: 'Brak wzorca — nie mozna przeniesc calego semestru' });
+      res.status(400).json({ error: 'Brak serii — ten termin nie pochodzi z wzorca' });
       return;
     }
 
@@ -313,6 +526,22 @@ export async function move(req: Request, res: Response): Promise<void> {
     const holidaySet = new Set(holidayList.map((h) => dateToStr(h.date)));
     const movable = shifted.filter((s) => !holidaySet.has(dateToStr(s.target)));
 
+    // Zaden z przesunietych terminow nie moze wypasc poza zakres semestru wydzialu.
+    const rangeKeys = await semesterKeysForEntry(existing.curriculumEntryId, existing.facultyId);
+    if (rangeKeys) {
+      const outside = movable.find((s) => {
+        const k = dateToStr(s.target);
+        return k < rangeKeys.startKey || k > rangeKeys.endKey;
+      });
+      if (outside) {
+        res.status(400).json({
+          error: 'DATE_OUTSIDE_SEMESTER',
+          details: { startDate: rangeKeys.startKey, endDate: rangeKeys.endKey, when: dateToStr(outside.target) },
+        });
+        return;
+      }
+    }
+
     // Zakres blokow docelowy (order) do sprawdzenia konfliktow.
     const [ns, ne] = await Promise.all([
       prisma.timeBlock.findUnique({ where: { id: newStartBlockId }, select: { order: true } }),
@@ -331,42 +560,75 @@ export async function move(req: Request, res: Response): Promise<void> {
       const dayEnd = new Date(target);
       dayEnd.setUTCHours(23, 59, 59, 999);
       const base = { date: { gte: dayStart, lte: dayEnd }, status: { not: 'CANCELLED' as const }, id: { notIn: futureIds } };
-      const inc = { startBlock: { select: { order: true } }, endBlock: { select: { order: true } } };
-      const overlaps = (list: { startBlock: { order: number }; endBlock: { order: number } }[]) =>
-        list.some((x) => rangesOverlap(ns.order, ne.order, x.startBlock.order, x.endBlock.order));
+      // Pelne szczegoly konfliktu (label + zakres blokow), zeby komunikat byl czytelny —
+      // tak samo jak validateEntry przy przenoszeniu pojedynczego terminu. Bez tego
+      // front pokazywal "... undefined (undefined)".
+      const blockTimes = {
+        startBlock: { select: { order: true, startTime: true } },
+        endBlock: { select: { order: true, endTime: true } },
+      };
+      const hit = <T extends { startBlock: { order: number }; endBlock: { order: number } }>(list: T[]) =>
+        list.find((x) => rangesOverlap(ns.order, ne.order, x.startBlock.order, x.endBlock.order));
 
-      const roomC = await prisma.scheduleEntry.findMany({ where: { ...base, roomId: targetRoomId }, include: inc });
-      if (overlaps(roomC)) {
-        res.status(409).json({ error: 'ROOM_CONFLICT', details: { when: dateToStr(target) } });
+      const roomC = await prisma.scheduleEntry.findMany({
+        where: { ...base, roomId: targetRoomId },
+        include: { ...blockTimes, room: { select: { number: true, building: { select: { name: true } } } } },
+      });
+      const roomHit = hit(roomC);
+      if (roomHit) {
+        res.status(409).json({
+          error: 'ROOM_CONFLICT',
+          details: {
+            conflictId: roomHit.id,
+            label: `${roomHit.room.building.name}, sala ${roomHit.room.number}`,
+            blockRange: `${roomHit.startBlock.startTime}-${roomHit.endBlock.endTime}`,
+            when: dateToStr(target),
+          },
+        });
         return;
       }
-      const instrC = await prisma.scheduleEntry.findMany({ where: { ...base, instructorId: targetInstructorId }, include: inc });
-      if (overlaps(instrC)) {
-        res.status(409).json({ error: 'INSTRUCTOR_CONFLICT', details: { when: dateToStr(target) } });
+      const instrC = await prisma.scheduleEntry.findMany({
+        where: { ...base, instructorId: targetInstructorId },
+        include: { ...blockTimes, instructor: { select: { firstName: true, lastName: true, title: true } } },
+      });
+      const instrHit = hit(instrC);
+      if (instrHit) {
+        const i = instrHit.instructor;
+        res.status(409).json({
+          error: 'INSTRUCTOR_CONFLICT',
+          details: {
+            conflictId: instrHit.id,
+            label: `${i.title ? i.title + ' ' : ''}${i.firstName} ${i.lastName}`,
+            blockRange: `${instrHit.startBlock.startTime}-${instrHit.endBlock.endTime}`,
+            when: dateToStr(target),
+          },
+        });
         return;
       }
       if (groupFamilyIds.length > 0) {
-        const groupC = await prisma.scheduleEntry.findMany({ where: { ...base, studentGroupId: { in: groupFamilyIds } }, include: inc });
-        if (overlaps(groupC)) {
-          res.status(409).json({ error: 'GROUP_CONFLICT', details: { when: dateToStr(target) } });
+        const groupC = await prisma.scheduleEntry.findMany({
+          where: { ...base, studentGroupId: { in: groupFamilyIds } },
+          include: { ...blockTimes, studentGroup: { select: { name: true } } },
+        });
+        const groupHit = hit(groupC);
+        if (groupHit) {
+          res.status(409).json({
+            error: 'GROUP_CONFLICT',
+            details: {
+              conflictId: groupHit.id,
+              label: groupHit.studentGroup?.name ?? 'grupa',
+              blockRange: `${groupHit.startBlock.startTime}-${groupHit.endBlock.endTime}`,
+              when: dateToStr(target),
+            },
+          });
           return;
         }
       }
     }
 
-    // Aktualizuj wzorzec + przesun przyszle terminy w transakcji.
-    await prisma.$transaction([
-      prisma.scheduleTemplate.update({
-        where: { id: existing.templateId },
-        data: {
-          dayOfWeek: dayNumToEnum[targetDayNum],
-          startBlockId: newStartBlockId,
-          endBlockId: newEndBlockId,
-          roomId: targetRoomId,
-          instructorId: targetInstructorId,
-        },
-      }),
-      ...movable.map(({ entry, target }) =>
+    // Przesuwamy WYLACZNIE terminy — wzorzec tygodnia zostaje nietkniety.
+    await prisma.$transaction(
+      movable.map(({ entry, target }) =>
         prisma.scheduleEntry.update({
           where: { id: entry.id },
           data: {
@@ -378,12 +640,12 @@ export async function move(req: Request, res: Response): Promise<void> {
           },
         }),
       ),
-    ]);
+    );
 
     const skippedHolidays = futureEntries.length - movable.length;
     res.json({
       data: { updatedCount: movable.length, skippedHolidays },
-      message: `Zaktualizowano wzorzec i ${movable.length} przyszlych terminow${skippedHolidays > 0 ? `, pominieto ${skippedHolidays} (dni wolne)` : ''}`,
+      message: `Przeniesiono ${movable.length} przyszlych terminow (wzorzec bez zmian)${skippedHolidays > 0 ? `, pominieto ${skippedHolidays} (dni wolne)` : ''}`,
     });
   } catch (error) {
     if (isNotFoundError(error)) {

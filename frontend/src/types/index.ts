@@ -112,7 +112,6 @@ export interface CurriculumVersion {
   degreeLevel: DegreeLevel;
   totalSemesters: number;
   startSemesterType: SemesterType;
-  isActive: boolean;
   specializationId: string;
   specialization?: Specialization;
   _count?: { entries: number };
@@ -163,14 +162,6 @@ export interface StudentGroup {
   subGroups?: StudentGroup[];
 }
 
-export interface GroupProposalItem {
-  name: string;
-  type: GroupType;
-  size: number;
-  parentName: string | null;
-  studyYear: number;
-}
-
 export type ClassType = 'LECTURE' | 'EXERCISE' | 'LAB' | 'PROJECT' | 'SEMINAR';
 export type WeekType = 'EVERY' | 'EVEN' | 'ODD';
 export type EntryStatus = 'SCHEDULED' | 'CANCELLED' | 'MAKEUP';
@@ -195,7 +186,14 @@ export interface RoomRef {
 export interface ScheduleTemplate {
   id: string;
   curriculumEntryId: string;
-  curriculumEntry: { id: string; subject: { id: string; name: string } };
+  /** Wydzial wyprowadzany z siatki po stronie serwera — niezmienny. */
+  facultyId: string;
+  curriculumEntry: {
+    id: string;
+    subject: { id: string; name: string };
+    /** Nabor programu — z nim i `semester` liczy sie pora roku wzorca (semesterTypeOf). */
+    curriculumVersion: { startSemesterType: SemesterType };
+  };
   classType: ClassType;
   room: RoomRef;
   instructor: InstructorRef & { id: string };
@@ -215,6 +213,8 @@ export interface ScheduleEntry {
   status: EntryStatus;
   /** Recznie zmieniony pojedynczy termin — nie idzie za operacjami na calej serii. */
   detached: boolean;
+  /** Wydzial terminu — takze dla terminow dodanych recznie (template = null). */
+  facultyId: string;
   classType: ClassType;
   room: RoomRef;
   instructor: InstructorRef & { id: string };
@@ -223,7 +223,7 @@ export interface ScheduleEntry {
     id: string;
     semester: number;
     subject: { id: string; name: string };
-    curriculumVersion: { specializationId: string };
+    curriculumVersion: { specializationId: string; studyMode: StudyMode };
   };
   template: { id: string; dayOfWeek: DayOfWeek; weekType: WeekType; studyMode: StudyMode } | null;
   startBlock: BlockRef;
@@ -238,7 +238,17 @@ export interface SemesterCalendar {
   startDate: string;
   endDate: string;
   teachingWeeks: number;
+  /** Kalendarz zawsze nalezy do wydzialu — wariant ogolnouczelniany nie istnieje. */
+  facultyId: string;
+  faculty: { id: string; name: string; shortName: string };
+  /** Wzorce tygodnia, ktore rozpisza sie z tego zakresu dat (liczone przez serwer). */
+  templateCount: number;
+  /** Terminy juz stojace w tym zakresie — tyle skasuje nadpisanie albo czyszczenie planu. */
+  entryCount: number;
 }
+
+/** Skad wziely sie daty semestru uzyte przy generowaniu. */
+export type SemesterRangeSource = 'FACULTY' | 'DERIVED';
 
 export interface PublicHoliday {
   id: string;

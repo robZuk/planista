@@ -2,6 +2,7 @@ import {
   Building2,
   CalendarDays,
   CalendarOff,
+  CalendarRange,
   Clock,
   GraduationCap,
   LayoutDashboard,
@@ -94,6 +95,13 @@ export const NAV_GROUPS: NavGroup[] = [
   {
     label: 'Ustawienia',
     items: [
+      {
+        to: '/semester-calendars',
+        label: 'Kalendarz semestru',
+        icon: CalendarRange,
+        roles: ['ADMIN', 'DEAN_OFFICE'],
+        keywords: ['semestr', 'zakres', 'daty', 'tygodnie'],
+      },
       {
         to: '/holidays',
         label: 'Dni wolne',

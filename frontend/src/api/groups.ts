@@ -1,5 +1,5 @@
 import { api } from '@/lib/api';
-import type { GroupProposalItem, GroupType, StudentGroup, StudyMode } from '@/types';
+import type { GroupType, StudentGroup, StudyMode } from '@/types';
 
 export async function fetchGroups(filters: {
   fieldOfStudyId?: string;
@@ -9,41 +9,6 @@ export async function fetchGroups(filters: {
   studyMode?: StudyMode;
 }): Promise<StudentGroup[]> {
   const res = await api.get('/groups', { params: filters });
-  return res.data.data;
-}
-
-export interface GenerateInput {
-  fieldOfStudyId: string;
-  specializationId?: string;
-  studyYear: number;
-  academicYear: string;
-  totalStudents: number;
-  studyMode?: StudyMode;
-  /** Liczba grup cwiczeniowych — podaje dziekanat (nie wyliczamy z pojemnosci sal). */
-  exerciseGroupCount?: number;
-  /** Liczba podgrup laboratoryjnych NA KAZDA grupe cwiczeniowa. */
-  labPerExercise?: number;
-}
-
-export interface GenerateResult {
-  proposal: GroupProposalItem[];
-  meta: { totalStudents: number; academicYear: string; studyYear: number };
-}
-
-/** Zwraca propozycje — NIC nie zapisuje. Zapis dopiero w confirmGroups. */
-export async function generateGroups(input: GenerateInput): Promise<GenerateResult> {
-  const res = await api.post('/groups/generate', input);
-  return res.data.data;
-}
-
-export async function confirmGroups(input: {
-  fieldOfStudyId: string;
-  specializationId?: string;
-  academicYear: string;
-  studyMode?: StudyMode;
-  proposal: GroupProposalItem[];
-}): Promise<StudentGroup[]> {
-  const res = await api.post('/groups/confirm', input);
   return res.data.data;
 }
 
@@ -80,4 +45,12 @@ export async function deleteGroup(id: string): Promise<void> {
 
 export async function deleteAllGroups(academicYear: string): Promise<void> {
   await api.delete('/groups', { params: { academicYear } });
+}
+
+/** Kopiuje caly sklad grup danego roku na kolejny rok akademicki (musi byc pusty). */
+export async function copyGroupsToNextYear(
+  academicYear: string,
+): Promise<{ targetYear: string; count: number }> {
+  const res = await api.post('/groups/copy-to-next-year', { academicYear });
+  return res.data.data;
 }

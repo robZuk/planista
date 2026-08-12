@@ -1,7 +1,8 @@
-import type { ClassType, DayOfWeek, StudyMode, WeekType } from '@prisma/client';
+import type { ClassType, DayOfWeek, SemesterType, StudyMode, WeekType } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { getGroupFamilyIds } from '../lib/groupFamily';
 import { roomTypeMap, compatibleWeekTypes, dayEnumToNum, checkTimeWindow, rangesOverlap } from '../lib/scheduleTime';
+import { semesterTypeOf } from '../lib/semester';
 
 export type ValidationError =
   | { code: 'BAD_BLOCK_RANGE'; details: { message: string } }
@@ -72,11 +73,54 @@ export interface TemplateValidationDto {
   startBlockId: string;
   endBlockId: string;
   academicYear: string;
+  /** Numer semestru wzorca — razem z siatka wyznacza typ semestru (patrz `sameSemesterType`). */
+  semester: number;
+  /** Wpis siatki, z ktorego wzorzec wyrasta — stad `startSemesterType` programu. */
+  curriculumEntryId: string;
   weekType: WeekType;
   studyMode: StudyMode;
   excludeId?: string;
 }
 
+/** Kandydat na konflikt, doczytany o siatke — tyle, ile trzeba do ustalenia pory roku. */
+type SemesterTyped = {
+  semester: number;
+  curriculumEntry: { curriculumVersion: { startSemesterType: SemesterType } };
+};
+
+/**
+ * Doczytanie potrzebne, by w ogole dalo sie policzyc typ semestru kandydata.
+ * Kazdy wzorzec pyta o `startSemesterType` SWOJEJ siatki, bo dwa wzorce w tym samym
+ * roku moga wyrastac z programow o roznym naborze.
+ */
+const semesterTypeInclude = {
+  curriculumEntry: { select: { curriculumVersion: { select: { startSemesterType: true } } } },
+};
+
+/**
+ * Czy dwa wzorce w ogole trwaja w tym samym czasie, czyli w tym samym typie semestru
+ * (zimowy/letni). Zajecia semestru zimowego i letniego nigdy nie odbywaja sie
+ * jednoczesnie, wiec moga bez kolizji dzielic sale, prowadzacego i grupe — bez tego
+ * warunku polowa slotow w roku bylaby blokowana przez plan drugiej polowy.
+ *
+ * Typu NIE wolno zgadywac z parzystosci numeru: przy naborze lutowym
+ * (startSemesterType = SUMMER) semestr 1 jest letni. Dlatego liczy go `semesterTypeOf`
+ * z siatki kazdego wzorca osobno.
+ */
+function sameSemesterType(a: SemesterType, candidate: SemesterTyped): boolean {
+  const theirs = semesterTypeOf(
+    candidate.curriculumEntry.curriculumVersion.startSemesterType,
+    candidate.semester,
+  );
+  return a === theirs;
+}
+
+/**
+ * Walidacja wzorca patrzy WYLACZNIE na inne wzorce, a walidacja terminu wylacznie
+ * na inne terminy. To celowe: wzorzec i kalendarz to dwa rozdzielone swiaty, ktore
+ * spotykaja sie dopiero przy generowaniu semestru (tam konflikty liczy generator).
+ * Nie "naprawiaj" tego, dokladajac tu zapytania o ScheduleEntry.
+ */
 export async function validateTemplate(dto: TemplateValidationDto): Promise<ValidationError | null> {
   const range = await loadBlockRange(dto.startBlockId, dto.endBlockId);
   if (!range.ok) return { code: 'BAD_BLOCK_RANGE', details: { message: range.error } };
@@ -98,6 +142,14 @@ export async function validateTemplate(dto: TemplateValidationDto): Promise<Vali
     }
   }
 
+  // Pora roku wzorca, ktory wlasnie zapisujemy — punkt odniesienia dla kandydatow.
+  const own = await prisma.curriculumEntry.findUnique({
+    where: { id: dto.curriculumEntryId },
+    select: { curriculumVersion: { select: { startSemesterType: true } } },
+  });
+  if (!own) return { code: 'BAD_BLOCK_RANGE', details: { message: 'Wpis siatki nie istnieje' } };
+  const ownSemesterType = semesterTypeOf(own.curriculumVersion.startSemesterType, dto.semester);
+
   const excludeWeekTypes = compatibleWeekTypes(dto.weekType);
   const baseWhere = {
     dayOfWeek: dto.dayOfWeek,
@@ -106,16 +158,27 @@ export async function validateTemplate(dto: TemplateValidationDto): Promise<Vali
     ...(dto.excludeId ? { id: { not: dto.excludeId } } : {}),
   };
 
+  /** Kolizja tylko z wzorcem tej samej pory roku i nachodzacym zakresem blokow. */
+  const clashes = <T extends SemesterTyped & { startBlock: { order: number }; endBlock: { order: number } }>(
+    candidates: T[],
+  ): T | undefined =>
+    candidates.find(
+      (t) =>
+        sameSemesterType(ownSemesterType, t) &&
+        rangesOverlap(range.startOrder, range.endOrder, t.startBlock.order, t.endBlock.order),
+    );
+
   // Konflikt sali.
   const roomCandidates = await prisma.scheduleTemplate.findMany({
     where: { ...baseWhere, roomId: dto.roomId },
     include: {
+      ...semesterTypeInclude,
       startBlock: { select: { order: true, startTime: true } },
       endBlock: { select: { order: true, endTime: true } },
       room: { select: { number: true, building: { select: { name: true } } } },
     },
   });
-  const roomHit = roomCandidates.find((t) => rangesOverlap(range.startOrder, range.endOrder, t.startBlock.order, t.endBlock.order));
+  const roomHit = clashes(roomCandidates);
   if (roomHit) {
     return {
       code: 'ROOM_CONFLICT',
@@ -132,12 +195,13 @@ export async function validateTemplate(dto: TemplateValidationDto): Promise<Vali
   const instrCandidates = await prisma.scheduleTemplate.findMany({
     where: { ...baseWhere, instructorId: dto.instructorId },
     include: {
+      ...semesterTypeInclude,
       startBlock: { select: { order: true, startTime: true } },
       endBlock: { select: { order: true, endTime: true } },
       instructor: { select: { firstName: true, lastName: true, title: true } },
     },
   });
-  const instrHit = instrCandidates.find((t) => rangesOverlap(range.startOrder, range.endOrder, t.startBlock.order, t.endBlock.order));
+  const instrHit = clashes(instrCandidates);
   if (instrHit) {
     const i = instrHit.instructor;
     return {
@@ -157,12 +221,13 @@ export async function validateTemplate(dto: TemplateValidationDto): Promise<Vali
     const groupCandidates = await prisma.scheduleTemplate.findMany({
       where: { ...baseWhere, studentGroupId: { in: familyIds } },
       include: {
+        ...semesterTypeInclude,
         startBlock: { select: { order: true, startTime: true } },
         endBlock: { select: { order: true, endTime: true } },
         studentGroup: { select: { name: true } },
       },
     });
-    const groupHit = groupCandidates.find((t) => rangesOverlap(range.startOrder, range.endOrder, t.startBlock.order, t.endBlock.order));
+    const groupHit = clashes(groupCandidates);
     if (groupHit) {
       return {
         code: 'GROUP_CONFLICT',

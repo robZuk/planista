@@ -5,7 +5,7 @@ import { Controller, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import type { ColumnDef } from '@tanstack/react-table';
-import { ExternalLink, Plus, Table2 } from 'lucide-react';
+import { ExternalLink, Layers, Plus, Table2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -18,7 +18,14 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
-import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty';
+import {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from '@/components/ui/empty';
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import {
@@ -29,9 +36,9 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Spinner } from '@/components/ui/spinner';
-import { Switch } from '@/components/ui/switch';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { AcademicYearSelector } from '@/components/AcademicYearSelector';
+import { FieldOfStudySelector } from '@/components/FieldOfStudySelector';
 import { Combobox } from '@/components/Combobox';
 import { DataTable } from '@/components/data-table/DataTable';
 import { RowActions } from '@/components/data-table/RowActions';
@@ -40,7 +47,6 @@ import {
   createVersion,
   deleteVersion,
   fetchVersions,
-  updateVersion,
   type CreateVersionInput,
 } from '@/api/curriculum';
 import { fetchSpecializations } from '@/api/specializations';
@@ -54,8 +60,9 @@ import {
 import { SEMESTER_TYPE_LABELS } from '@/lib/semester';
 import { useAcademicYearStore } from '@/store/academicYearStore';
 import { useFacultyFilterStore } from '@/store/facultyStore';
+import { useFieldFilterStore } from '@/store/fieldFilterStore';
 import { useAuthStore } from '@/store/authStore';
-import type { CurriculumVersion, SemesterType } from '@/types';
+import type { CurriculumVersion, DegreeLevel, SemesterType } from '@/types';
 
 const versionSchema = z.object({
   specializationId: z.string().min(1, 'Wybierz specjalnosc'),
@@ -77,12 +84,11 @@ type VersionValues = z.infer<typeof versionSchema>;
 const COLUMN_LABELS = {
   specialization: 'Specjalnosc',
   field: 'Kierunek',
-  academicYear: 'Rok',
+  academicYear: 'Rocznik naboru',
   studyMode: 'Tryb',
   degreeLevel: 'Stopien',
   totalSemesters: 'Semestry',
   entries: 'Przedmioty',
-  isActive: 'Aktywna',
 };
 
 export default function VersionsTab() {
@@ -93,7 +99,11 @@ export default function VersionsTab() {
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [deleting, setDeleting] = useState<CurriculumVersion | null>(null);
-  const facultyId = useFacultyFilterStore((s) => s.facultyId);
+  const { facultyId, setFacultyId } = useFacultyFilterStore();
+  const { fieldOfStudyId, setFieldOfStudyId } = useFieldFilterStore();
+  // Stopien zaweza tylko te liste, wiec zostaje lokalny — w odroznieniu od wydzialu
+  // i kierunku, ktore sa wspolnym kontekstem calej aplikacji.
+  const [degreeLevel, setDegreeLevel] = useState<DegreeLevel | 'all'>('all');
 
   const { data: versions, isPending } = useQuery({
     queryKey: ['curriculum-versions'],
@@ -104,17 +114,34 @@ export default function VersionsTab() {
     queryFn: () => fetchSpecializations(),
   });
 
-  // Rok akademicki to kontekst calego widoku — pokazujemy tylko siatki z wybranego roku.
-  // Wydzial dodatkowo zaweza po fieldOfStudy.faculty (siatka sama nie ma facultyId).
+  // Rok akademicki to kontekst calego widoku — poza nim nie ma czego pokazywac, wiec
+  // filtruje osobno: sluzy tez za mianownik licznika "N z M".
+  const inYear = useMemo(
+    () => versions?.filter((version) => version.academicYear === academicYear),
+    [versions, academicYear],
+  );
+
+  // Wydzial i kierunek zawezaja przez specjalnosc (siatka nie ma wlasnego facultyId
+  // ani fieldOfStudyId), stopien juz bezposrednio.
   const visible = useMemo(
     () =>
-      versions?.filter((version) => {
-        if (version.academicYear !== academicYear) return false;
-        if (facultyId === 'all') return true;
-        return version.specialization?.fieldOfStudy?.faculty?.id === facultyId;
+      inYear?.filter((version) => {
+        const field = version.specialization?.fieldOfStudy;
+        if (facultyId !== 'all' && field?.faculty?.id !== facultyId) return false;
+        if (fieldOfStudyId !== 'all' && field?.id !== fieldOfStudyId) return false;
+        if (degreeLevel !== 'all' && version.degreeLevel !== degreeLevel) return false;
+        return true;
       }),
-    [versions, academicYear, facultyId],
+    [inYear, facultyId, fieldOfStudyId, degreeLevel],
   );
+
+  const isNarrowed = facultyId !== 'all' || fieldOfStudyId !== 'all' || degreeLevel !== 'all';
+
+  const resetFilters = () => {
+    setFacultyId('all');
+    setFieldOfStudyId('all');
+    setDegreeLevel('all');
+  };
 
   const form = useForm<VersionValues>({
     resolver: zodResolver(versionSchema),
@@ -140,13 +167,6 @@ export default function VersionsTab() {
       setDialogOpen(false);
       invalidate();
     },
-    onError: (error) => toast.error(getErrorMessage(error)),
-  });
-
-  const toggleActive = useMutation({
-    mutationFn: ({ id, isActive }: { id: string; isActive: boolean }) =>
-      updateVersion(id, { isActive }),
-    onSuccess: () => invalidate(),
     onError: (error) => toast.error(getErrorMessage(error)),
   });
 
@@ -232,18 +252,6 @@ export default function VersionsTab() {
       cell: ({ row }) => <Badge variant="secondary">{row.original._count?.entries ?? 0}</Badge>,
     },
     {
-      accessorKey: 'isActive',
-      header: 'Aktywna',
-      cell: ({ row }) => (
-        <Switch
-          checked={row.original.isActive}
-          disabled={!canEdit || toggleActive.isPending}
-          aria-label="Siatka aktywna"
-          onCheckedChange={(isActive) => toggleActive.mutate({ id: row.original.id, isActive })}
-        />
-      ),
-    },
-    {
       id: 'actions',
       enableHiding: false,
       size: 60,
@@ -273,7 +281,41 @@ export default function VersionsTab() {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <AcademicYearSelector yearOnly />
+        <div className="flex flex-wrap items-center gap-2">
+          <AcademicYearSelector yearOnly />
+          <FieldOfStudySelector />
+
+          <Select
+            value={degreeLevel}
+            onValueChange={(value) => setDegreeLevel(value as DegreeLevel | 'all')}
+          >
+            <SelectTrigger className="w-48" aria-label="Stopien studiow">
+              <Layers className="size-4 text-muted-foreground" />
+              <SelectValue placeholder="Stopien" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Oba stopnie</SelectItem>
+              {DEGREE_LEVELS.map((level) => (
+                <SelectItem key={level} value={level}>
+                  {DEGREE_LEVEL_LABELS[level]}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          {isNarrowed && (
+            <>
+              <span className="text-sm text-muted-foreground tabular-nums">
+                {visible?.length ?? 0} z {inYear?.length ?? 0}
+              </span>
+              <Button variant="ghost" size="sm" onClick={resetFilters}>
+                <X />
+                Wyczysc filtry
+              </Button>
+            </>
+          )}
+        </div>
+
         {canEdit && (
           <Button onClick={openCreate}>
             <Plus />
@@ -289,17 +331,39 @@ export default function VersionsTab() {
         searchPlaceholder="Szukaj specjalnosci…"
         columnLabels={COLUMN_LABELS}
         emptyState={
+          // Rok bez ani jednej siatki to co innego niz rok, z ktorego filtry wszystko wyciely —
+          // w drugim przypadku podpowiadamy wyczyszczenie zamiast zakladania nowej siatki.
           <Empty className="border">
             <EmptyHeader>
               <EmptyMedia variant="icon">
                 <Table2 />
               </EmptyMedia>
-              <EmptyTitle>Brak siatek dla roku {academicYear}</EmptyTitle>
-              <EmptyDescription>
-                Siatka wiaze specjalnosc z rokiem i trybem studiow. Zmien rok lub wydzial w
-                przelacznikach powyzej albo utworz nowa.
-              </EmptyDescription>
+              {isNarrowed && (inYear?.length ?? 0) > 0 ? (
+                <>
+                  <EmptyTitle>Zadna siatka nie pasuje do filtrow</EmptyTitle>
+                  <EmptyDescription>
+                    Dla rocznika naboru {academicYear} jest {inYear?.length} siatek, ale wybrany
+                    wydzial, kierunek lub stopien je odsiewa.
+                  </EmptyDescription>
+                </>
+              ) : (
+                <>
+                  <EmptyTitle>Brak siatek dla rocznika naboru {academicYear}</EmptyTitle>
+                  <EmptyDescription>
+                    Siatka wiaze specjalnosc z rocznikiem naboru i trybem studiow. Zmien rocznik w
+                    przelaczniku powyzej albo utworz nowa.
+                  </EmptyDescription>
+                </>
+              )}
             </EmptyHeader>
+            {isNarrowed && (
+              <EmptyContent>
+                <Button variant="outline" size="sm" onClick={resetFilters}>
+                  <X />
+                  Wyczysc filtry
+                </Button>
+              </EmptyContent>
+            )}
           </Empty>
         }
       />
@@ -309,7 +373,8 @@ export default function VersionsTab() {
           <DialogHeader>
             <DialogTitle>Nowa siatka godzin</DialogTitle>
             <DialogDescription>
-              Specjalnosc, rok i tryb tworza razem klucz — takiej kombinacji nie da sie powtorzyc.
+              Specjalnosc, rocznik naboru i tryb tworza razem klucz — takiej kombinacji nie da sie
+              powtorzyc.
             </DialogDescription>
           </DialogHeader>
 
@@ -341,13 +406,17 @@ export default function VersionsTab() {
 
               <div className="grid gap-4 sm:grid-cols-2">
                 <Field>
-                  <FieldLabel htmlFor="academicYear">Rok akademicki</FieldLabel>
+                  <FieldLabel htmlFor="academicYear">Rocznik naboru</FieldLabel>
                   <Input
                     id="academicYear"
                     placeholder="2024/2025"
                     aria-invalid={!!form.formState.errors.academicYear}
                     {...form.register('academicYear')}
                   />
+                  <FieldDescription>
+                    Rok akademicki, w ktorym rocznik zaczyna studia — siatka obowiazuje go przez
+                    caly tok, nie jest rokiem prowadzenia zajec.
+                  </FieldDescription>
                   <FieldError errors={[form.formState.errors.academicYear]} />
                 </Field>
 

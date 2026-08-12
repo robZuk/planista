@@ -32,10 +32,10 @@ export async function createVersion(input: CreateVersionInput): Promise<Curricul
   return res.data.data;
 }
 
-/** Backend pozwala zmienic tylko liczbe semestrow i flage aktywnosci. */
+/** Backend pozwala zmienic tylko liczbe semestrow. */
 export async function updateVersion(
   id: string,
-  input: { totalSemesters?: number; isActive?: boolean },
+  input: { totalSemesters?: number },
 ): Promise<CurriculumVersion> {
   const res = await api.put(`/curriculum/versions/${id}`, input);
   return res.data.data;
