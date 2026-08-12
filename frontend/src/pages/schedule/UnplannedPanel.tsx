@@ -48,8 +48,6 @@ export function UnplannedPanel({
             </>
           )}
         </div>
-        {/* Ikone niesie juz naglowek — druga, tuz pod nia, tylko halasuje. */}
-        <MissingGroupsNote types={missingGroupTypes} hideIcon />
       </div>
     );
   }
