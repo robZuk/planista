@@ -3,8 +3,18 @@ import bcrypt from 'bcryptjs';
 
 const prisma = new PrismaClient();
 
-const ACADEMIC_YEAR = '2024/2025'; // rok "biezacy" — do niego przypisani sa uzytkownicy testowi
-const ACADEMIC_YEARS = ['2023/2024', ACADEMIC_YEAR, '2025/2026']; // dodatkowe lata do testow przelacznika
+// Rok akademicki liczony dynamicznie z dzisiejszej daty, zeby seed sam sie nie
+// starzal. Rok Y/Y+1 formalnie startuje 1.10, ale dla danych startowych przelaczamy
+// sie na nowy juz latem (od lipca): w wakacje planuje sie rok, ktory zaraz sie zacznie,
+// wiec "biezacy" ma byc ten nadchodzacy (np. sierpien 2026 -> 2026/2027).
+const YEAR_ROLLOVER_MONTH = 6; // lipiec (getMonth() jest 0-indeksowane)
+const now = new Date();
+const baseYear =
+  now.getMonth() >= YEAR_ROLLOVER_MONTH ? now.getFullYear() : now.getFullYear() - 1;
+const toAcademicYear = (start: number) => `${start}/${start + 1}`;
+
+const ACADEMIC_YEAR = toAcademicYear(baseYear); // rok "biezacy" — do niego przypisani sa uzytkownicy testowi
+const ACADEMIC_YEARS = [baseYear - 1, baseYear, baseYear + 1].map(toAcademicYear); // poprzedni/biezacy/nastepny — do testow przelacznika
 
 /**
  * Seed — dane startowe do developmentu.
@@ -227,12 +237,21 @@ async function main() {
   }
 
   console.log('🎉 Dni wolne...');
+  // Stale (niezalezne od Wielkanocy) swieta semestru zimowego, generowane dla kazdego
+  // rocznika z ACADEMIC_YEARS. Daty stycznia naleza do drugiego roku rocznika.
+  // PublicHoliday.date jest @unique — daty roznych rocznikow sie nie pokrywaja.
   await prisma.publicHoliday.createMany({
-    data: [
-      { date: new Date('2024-11-01'), name: 'Wszystkich Swietych' },
-      { date: new Date('2024-11-11'), name: 'Narodowe Swieto Niepodleglosci' },
-      { date: new Date('2024-12-25'), name: 'Boze Narodzenie' },
-    ],
+    data: ACADEMIC_YEARS.flatMap((year) => {
+      const s = Number(year.split('/')[0]);
+      return [
+        { date: new Date(`${s}-11-01`), name: 'Wszystkich Swietych' },
+        { date: new Date(`${s}-11-11`), name: 'Narodowe Swieto Niepodleglosci' },
+        { date: new Date(`${s}-12-25`), name: 'Boze Narodzenie' },
+        { date: new Date(`${s}-12-26`), name: 'Boze Narodzenie (drugi dzien)' },
+        { date: new Date(`${s + 1}-01-01`), name: 'Nowy Rok' },
+        { date: new Date(`${s + 1}-01-06`), name: 'Trzech Kroli' },
+      ];
+    }),
   });
 
   // ─── Uzytkownicy (hasla hashowane bcryptem) ──────────────────
