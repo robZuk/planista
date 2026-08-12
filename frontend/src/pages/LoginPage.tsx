@@ -138,7 +138,7 @@ export default function LoginPage() {
         </div>
         <div className="max-w-md lg:my-auto">
           <p className="font-heading text-3xl leading-tight font-semibold">
-            Plan zajec, ktory uklada sie sam.
+            System do planowania zajec.
           </p>
           <p className="mt-4 text-primary-foreground/80">
             Siatki godzin, grupy, sale i terminy w jednym miejscu — z automatycznym wykrywaniem
