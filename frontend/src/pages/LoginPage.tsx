@@ -129,14 +129,14 @@ export default function LoginPage() {
       </div>
 
       {/* Prawa kolumna: panel marki — na waskich ekranach chowamy */}
-      <div className="relative hidden bg-primary text-primary-foreground lg:flex lg:flex-col lg:justify-between lg:p-12">
+      <div className="relative hidden bg-primary text-primary-foreground lg:flex lg:flex-col lg:p-12">
         <div className="flex items-center gap-3">
           <div className="flex size-10 items-center justify-center rounded-lg bg-primary-foreground/15">
             <CalendarRange className="size-5" />
           </div>
-          <span className="font-heading text-xl font-semibold">Planista 7</span>
+          <span className="font-heading text-xl font-semibold">Planista</span>
         </div>
-        <div className="max-w-md">
+        <div className="max-w-md lg:my-auto">
           <p className="font-heading text-3xl leading-tight font-semibold">
             Plan zajec, ktory uklada sie sam.
           </p>
@@ -145,7 +145,6 @@ export default function LoginPage() {
             konfliktow.
           </p>
         </div>
-        <p className="text-sm text-primary-foreground/60">Uniwersytet Morski w Gdyni</p>
       </div>
     </div>
   );
