@@ -69,6 +69,52 @@ procedura przeliczenia opisana jest w [`scripts/import-backupu/README.md`](scrip
 | INSTRUCTOR  | prowadzacy@umg.edu.pl   | `Prowadzacy1234!`|
 | STUDENT     | student@umg.edu.pl      | `Student1234!`   |
 
+## Konteneryzacja i architektura sieci
+
+Cały system uruchamia się w kontenerach (Docker Compose), w dwóch wariantach:
+
+- **dev** (`docker compose up`) — hot-reload: backend `tsx watch`, frontend Vite HMR,
+  kod montowany z dysku.
+- **prod** (`docker compose -f docker-compose.yml -f docker-compose.prod.yml up`) —
+  zbudowane obrazy: backend `node dist` z `prisma migrate deploy` na starcie, frontend
+  jako statyki serwowane przez **nginx** (SPA + proxy `/api`).
+
+### Sieć — defense in depth
+
+Usługi nie stoją w jednej płaskiej sieci. Są **dwie**, a baza jest odcięta:
+
+```
+   swiat / host
+       |
+       |  wystawiony jest TYLKO frontend
+       |  (dev: 127.0.0.1:5174 · prod: :WEB_PORT -> nginx)
+       v
+ +-- edge -------------------------------------+
+ |   frontend  --/api-->  backend              |
+ +-------------------------------------+-------+
+                                       |  (backend jest tez w internal)
+ +-- internal (internal: true) --------+-------+
+ |   backend  ------------->  db (Postgres)     |
+ +---------------------------------------------+
+       ^                                   ^
+       |  brak trasy do internetu          |  brak portu na hoscie
+```
+
+Konkretnie:
+- **`db` (Postgres)** jest **tylko** w sieci `internal` (`internal: true`): nie ma
+  portu na hoście, nie ma trasy do internetu i **nie widzi jej frontend** — dosięga
+  jej wyłącznie backend.
+- **`frontend`** jest tylko w `edge` — nie ma dostępu do bazy (nie ma po co).
+- **`backend`** jest mostem między warstwami (`edge` + `internal`).
+- W prod **na zewnątrz wystawiony jest wyłącznie frontend**; backend i baza są
+  osiągalne tylko wewnątrz sieci Compose.
+- W dev porty backendu/frontu bindowane są na `127.0.0.1` (niewidoczne z LAN-u).
+
+Dodatkowo backend ma **rate-limit na logowaniu** (10 nieudanych prób / 15 min / IP)
+oraz `trust proxy`, by za nginx liczyć prawdziwe IP klienta.
+
+Wdrożenie produkcyjne opisuje [`docs/deploy-mikrus.md`](docs/deploy-mikrus.md).
+
 ## Postęp (fazy)
 
 - [x] **Faza 0** — Fundamenty: kopia backendu (porty 4001/5434), szkielet Vite + Tailwind 4 + shadcn, motyw granatowy, `/health`
