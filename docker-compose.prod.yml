@@ -1,0 +1,25 @@
+# Nadpisania PRODUKCYJNE — uzywane JAWNIE (override auto-dev sie nie zaladuje):
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build
+# Zbudowane obrazy, bez montowania kodu, restart polityki, sekrety z .env.prod.
+services:
+  db:
+    restart: unless-stopped
+
+  backend:
+    # Osobny tag niz dev — buildy dev/prod nie nadpisuja sie nawzajem.
+    image: planista7-backend-prod
+    build:
+      target: runner
+    restart: unless-stopped
+    # Sekrety prod (JWT, ew. nadpisania) z pliku poza repo — skopiuj z .env.prod.example.
+    env_file:
+      - .env.prod
+
+  frontend:
+    image: planista7-frontend-prod
+    build:
+      target: runner
+    restart: unless-stopped
+    ports:
+      # Jedyny port wystawiony na zewnatrz — nginx podaje SPA i proxuje /api na backend.
+      - '8080:80'

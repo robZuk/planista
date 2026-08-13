@@ -9,6 +9,7 @@ build/
 # env
 .env
 .env.local
+.env.prod
 *.local
 
 # claude code — lokalne uprawnienia per maszyna (nie wspoldzielone; *.local ich nie lapie)

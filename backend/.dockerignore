@@ -1,0 +1,9 @@
+# Co NIE trafia do kontekstu budowania obrazu (mniejszy kontekst = szybszy build,
+# brak przypadkowego kopiowania sekretow/smieci).
+node_modules
+dist
+.env
+.env.*
+*.log
+.git
+tsconfig.tsbuildinfo

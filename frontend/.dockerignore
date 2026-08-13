@@ -1,0 +1,7 @@
+# Kontekst budowania obrazu frontu — bez zaleznosci, buildow i lokalnych env.
+node_modules
+dist
+.env
+.env.*
+*.log
+.git

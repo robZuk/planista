@@ -1,0 +1,41 @@
+# Nadpisania DEWELOPERSKIE — Compose laduje ten plik AUTOMATYCZNIE przy `docker compose up`.
+# Roznica wzgledem bazy: obrazy w targecie 'dev', kod montowany z dysku (hot-reload),
+# porty odsloniete, sekrety deweloperskie wprost.
+services:
+  db:
+    ports:
+      # Odslaniamy 5434 na hosta, zeby natywny `npm run dev` (bez Dockera) tez trafial do bazy.
+      - '5434:5432'
+
+  backend:
+    # Osobny tag niz prod — inaczej build jednego srodowiska nadpisuje obraz drugiego.
+    image: planista7-backend-dev
+    build:
+      target: dev
+    command: npm run dev
+    environment:
+      # Sekrety deweloperskie — jawne, bo to tylko lokalne srodowisko.
+      JWT_ACCESS_SECRET: dev-access-secret-change-me
+      JWT_REFRESH_SECRET: dev-refresh-secret-change-me
+      CORS_ORIGIN: http://localhost:5174
+    volumes:
+      # Kod z dysku -> hot-reload. Anonimowy wolumen na node_modules, zeby bind
+      # z hosta NIE przyslonil zaleznosci zainstalowanych w obrazie.
+      - ./backend:/app
+      - /app/node_modules
+    ports:
+      - '4001:4001'
+
+  frontend:
+    image: planista7-frontend-dev
+    build:
+      target: dev
+    command: npm run dev -- --host
+    environment:
+      # Vite proxuje /api na kontener backendu (nazwa uslugi w sieci compose).
+      VITE_PROXY_TARGET: http://backend:4001
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    ports:
+      - '5174:5174'

@@ -1,17 +1,44 @@
+# Plik BAZOWY (wspolny dla dev i prod). Sam z siebie opisuje wariant produkcyjny
+# (obrazy budowane do targetu 'runner'). Dev nadpisuje go docker-compose.override.yml,
+# ktory Compose laduje AUTOMATYCZNIE przy `docker compose up`.
+#
+#   dev:   docker compose up                                   (baza + override)
+#   prod:  docker compose -f docker-compose.yml -f docker-compose.prod.yml up
 services:
-  postgres:
+  db:
     image: postgres:16-alpine
-    container_name: planista7_db
     environment:
       POSTGRES_DB: planista7
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: password
-    ports:
-      # host 5434 -> container 5432 (5434 zeby nie kolidowac z planista6 na 5433
-      # ani z lokalnym Postgresem na 5432)
-      - "5434:5432"
     volumes:
       - planista7_pgdata:/var/lib/postgresql/data
+    # Backend czeka az baza bedzie GOTOWA (nie tylko wystartowana) — wazne dla migracji.
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres -d planista7']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  backend:
+    build:
+      context: ./backend
+      target: runner
+    environment:
+      PORT: 4001
+      # Wewnatrz sieci compose backend laczy sie z baza po nazwie uslugi 'db' na 5432
+      # (5434 to tylko mapowanie na hosta, tu nieuzywane).
+      DATABASE_URL: postgresql://postgres:password@db:5432/planista7?schema=public
+    depends_on:
+      db:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./frontend
+      target: runner
+    depends_on:
+      - backend
 
 volumes:
   planista7_pgdata:
