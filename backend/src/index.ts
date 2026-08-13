@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import express, { type Express, type Request, type Response } from 'express';
 import cors from 'cors';
+import { prisma } from './lib/prisma';
 import authRoutes from './routes/auth';
 import facultiesRoutes from './routes/faculties';
 import buildingsRoutes from './routes/buildings';
@@ -62,7 +63,22 @@ export function createApp(): Express {
 if (require.main === module) {
   const app = createApp();
   const port = Number(process.env.PORT ?? 4001);
-  app.listen(port, () => {
+  const server = app.listen(port, () => {
     console.log(`[planista7] Backend nasluchuje na http://localhost:${port}`);
   });
+
+  // Graceful shutdown — na SIGTERM (docker stop) / SIGINT (Ctrl+C) domykamy serwer
+  // i rozlaczamy Prisme, zamiast czekac na twardy SIGKILL. Node jako PID 1 ignoruje
+  // sygnaly bez jawnego handlera, wiec bez tego kontener stopuje sie dopiero po ~10s.
+  const shutdown = (signal: string) => {
+    console.log(`[planista7] ${signal} — zamykam serwer...`);
+    server.close(async () => {
+      await prisma.$disconnect();
+      process.exit(0);
+    });
+    // Bezpiecznik: gdyby polaczenia nie chcialy sie zamknac, konczymy twardo po 8s.
+    setTimeout(() => process.exit(1), 8000).unref();
+  };
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
 }

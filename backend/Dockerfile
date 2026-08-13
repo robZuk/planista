@@ -38,4 +38,6 @@ COPY prisma ./prisma
 RUN npx prisma generate
 COPY --from=build /app/dist ./dist
 # Na starcie: najpierw dogonienie migracji, potem serwer.
-CMD ["sh", "-c", "npx prisma migrate deploy && node dist/index.js"]
+# `exec` -> node zastepuje sh i staje sie PID 1, wiec dostaje SIGTERM bezposrednio
+# (czyste zamkniecie przy docker stop, bez czekania na SIGKILL).
+CMD ["sh", "-c", "npx prisma migrate deploy && exec node dist/index.js"]
