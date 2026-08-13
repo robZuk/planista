@@ -4,6 +4,10 @@
 #
 #   dev:   docker compose up                                   (baza + override)
 #   prod:  docker compose -f docker-compose.yml -f docker-compose.prod.yml up
+#
+# name: ustala nazwe projektu (prefiks kontenerow/sieci/wolumenow) niezaleznie od
+# nazwy katalogu — stad kontenery to planista-*, a nie planista7-*.
+name: planista
 services:
   db:
     image: postgres:16-alpine
@@ -12,7 +16,7 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: password
     volumes:
-      - planista7_pgdata:/var/lib/postgresql/data
+      - pgdata:/var/lib/postgresql/data
     # Backend czeka az baza bedzie GOTOWA (nie tylko wystartowana) — wazne dla migracji.
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U postgres -d planista7']
@@ -41,4 +45,4 @@ services:
       - backend
 
 volumes:
-  planista7_pgdata:
+  pgdata:

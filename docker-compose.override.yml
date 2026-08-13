@@ -9,7 +9,7 @@ services:
 
   backend:
     # Osobny tag niz prod — inaczej build jednego srodowiska nadpisuje obraz drugiego.
-    image: planista7-backend-dev
+    image: planista-backend-dev
     build:
       target: dev
     command: npm run dev
@@ -27,7 +27,7 @@ services:
       - '4001:4001'
 
   frontend:
-    image: planista7-frontend-dev
+    image: planista-frontend-dev
     build:
       target: dev
     command: npm run dev -- --host

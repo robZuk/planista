@@ -7,7 +7,7 @@ services:
 
   backend:
     # Osobny tag niz dev — buildy dev/prod nie nadpisuja sie nawzajem.
-    image: planista7-backend-prod
+    image: planista-backend-prod
     build:
       target: runner
     restart: unless-stopped
@@ -16,7 +16,7 @@ services:
       - .env.prod
 
   frontend:
-    image: planista7-frontend-prod
+    image: planista-frontend-prod
     build:
       target: runner
     restart: unless-stopped
