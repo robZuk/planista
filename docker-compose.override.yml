@@ -2,10 +2,10 @@
 # Roznica wzgledem bazy: obrazy w targecie 'dev', kod montowany z dysku (hot-reload),
 # porty odsloniete, sekrety deweloperskie wprost.
 services:
-  db:
-    ports:
-      # Odslaniamy 5434 na hosta, zeby natywny `npm run dev` (bez Dockera) tez trafial do bazy.
-      - '5434:5432'
+  # db bez portu na hosta — jest w sieci 'internal' (internal: true), ktora z zasady
+  # nie publikuje portow. Baza jest osiagalna WYLACZNIE dla backendu, tak samo jak w
+  # prod. (Konsekwencja: natywny `npm run dev` nie dosiegnie tej bazy — pracujemy
+  # przez kontenery. Gdyby byl potrzebny natywny dostep, to swiadoma, osobna decyzja.)
 
   backend:
     # Osobny tag niz prod — inaczej build jednego srodowiska nadpisuje obraz drugiego.
@@ -24,7 +24,8 @@ services:
       - ./backend:/app
       - /app/node_modules
     ports:
-      - '4001:4001'
+      # Bind na localhost — backend dev nie wystawiony na LAN.
+      - '127.0.0.1:4001:4001'
 
   frontend:
     image: planista-frontend-dev
@@ -38,4 +39,5 @@ services:
       - ./frontend:/app
       - /app/node_modules
     ports:
-      - '5174:5174'
+      # Bind na localhost — front dev nie wystawiony na LAN.
+      - '127.0.0.1:5174:5174'

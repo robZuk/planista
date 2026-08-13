@@ -17,6 +17,10 @@ services:
       POSTGRES_PASSWORD: password
     volumes:
       - pgdata:/var/lib/postgresql/data
+    # Baza TYLKO w sieci wewnetrznej (internal: true) — niedostepna z internetu
+    # ani dla frontu. Widzi ja wylacznie backend.
+    networks:
+      - internal
     # Backend czeka az baza bedzie GOTOWA (nie tylko wystartowana) — wazne dla migracji.
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U postgres -d planista7']
@@ -30,9 +34,12 @@ services:
       target: runner
     environment:
       PORT: 4001
-      # Wewnatrz sieci compose backend laczy sie z baza po nazwie uslugi 'db' na 5432
-      # (5434 to tylko mapowanie na hosta, tu nieuzywane).
+      # Backend laczy sie z baza po nazwie uslugi 'db' na 5432 (sieciowo, w 'internal').
       DATABASE_URL: postgresql://postgres:password@db:5432/planista7?schema=public
+    # Backend jest w obu sieciach: 'internal' (dostep do bazy) i 'edge' (front go wola).
+    networks:
+      - internal
+      - edge
     depends_on:
       db:
         condition: service_healthy
@@ -41,8 +48,19 @@ services:
     build:
       context: ./frontend
       target: runner
+    # Front TYLKO w 'edge' — nie widzi bazy (nie ma jej po co widziec).
+    networks:
+      - edge
     depends_on:
       - backend
 
 volumes:
   pgdata:
+
+networks:
+  # Warstwa "brzegowa": front <-> backend.
+  edge:
+  # Warstwa wewnetrzna: backend <-> baza. internal: true = brak trasy do internetu,
+  # niedostepna spoza tych kontenerow (defense in depth).
+  internal:
+    internal: true
