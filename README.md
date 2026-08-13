@@ -71,13 +71,17 @@ procedura przeliczenia opisana jest w [`scripts/import-backupu/README.md`](scrip
 
 ## Konteneryzacja i architektura sieci
 
-Cały system uruchamia się w kontenerach (Docker Compose), w dwóch wariantach:
+Cały system uruchamia się w kontenerach (Docker Compose). Każde środowisko ma
+**własny, kompletny plik** (bez sklejania):
 
-- **dev** (`docker compose up`) — hot-reload: backend `tsx watch`, frontend Vite HMR,
-  kod montowany z dysku.
-- **prod** (`docker compose -f docker-compose.yml -f docker-compose.prod.yml up`) —
-  zbudowane obrazy: backend `node dist` z `prisma migrate deploy` na starcie, frontend
-  jako statyki serwowane przez **nginx** (SPA + proxy `/api`).
+- **dev** — `docker-compose.yml` (`docker compose up` / `make dev`): hot-reload —
+  backend `tsx watch`, frontend Vite HMR, kod montowany z dysku.
+- **prod** — `docker-compose.prod.yml` (`docker compose -f docker-compose.prod.yml up`
+  / `make prod`): zbudowane obrazy — backend `node dist` z `prisma migrate deploy` na
+  starcie, frontend jako statyki serwowane przez **nginx** (SPA + proxy `/api`).
+
+Wygodne skróty w `Makefile`: `make dev`, `make prod`, `make down`, `make logs`
+(samo `make` wypisze listę).
 
 ### Sieć — defense in depth
 

@@ -51,7 +51,7 @@ export WEB_PORT=XXXXX      # [PANEL] przydzielony port
 
 ## 6. Uruchomienie produkcyjne
 ```bash
-WEB_PORT=$WEB_PORT docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+WEB_PORT=$WEB_PORT docker compose -f docker-compose.prod.yml up -d --build
 ```
 Backend na starcie robi `prisma migrate deploy` (tworzy schemat w pustej bazie).
 
@@ -59,9 +59,9 @@ Backend na starcie robi `prisma migrate deploy` (tworzy schemat w pustej bazie).
 Nowa baza jest pusta — wgraj oczyszczony zrzut (191 przedmiotów, 3327 terminów,
 konta demo):
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.prod.yml \
+docker compose -f docker-compose.prod.yml \
   exec -T db psql -U postgres -d planista7 < db/planista7-dump.sql
-docker compose -f docker-compose.yml -f docker-compose.prod.yml restart backend
+docker compose -f docker-compose.prod.yml restart backend
 ```
 Konta demo (hasła w `README.md`): `admin@umg.edu.pl` / `Admin1234!` itd.
 
@@ -82,7 +82,7 @@ curl -s localhost:$WEB_PORT | grep -o '<title>[^<]*</title>'  # <title>Planista<
 ## 10. Aktualizacja (redeploy)
 ```bash
 cd planista && git pull
-WEB_PORT=$WEB_PORT docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+WEB_PORT=$WEB_PORT docker compose -f docker-compose.prod.yml up -d --build
 ```
 Dane w bazie zostają (wolumen `planista_pgdata`). To docelowo zautomatyzuje CD
 (GitHub Actions -> build obrazów -> deploy).

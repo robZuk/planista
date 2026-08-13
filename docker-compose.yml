@@ -1,13 +1,9 @@
-# Plik BAZOWY (wspolny dla dev i prod). Sam z siebie opisuje wariant produkcyjny
-# (obrazy budowane do targetu 'runner'). Dev nadpisuje go docker-compose.override.yml,
-# ktory Compose laduje AUTOMATYCZNIE przy `docker compose up`.
-#
-#   dev:   docker compose up                                   (baza + override)
-#   prod:  docker compose -f docker-compose.yml -f docker-compose.prod.yml up
-#
-# name: ustala nazwe projektu (prefiks kontenerow/sieci/wolumenow) niezaleznie od
-# nazwy katalogu — stad kontenery to planista-*, a nie planista7-*.
+# Srodowisko DEWELOPERSKIE — kompletne i samodzielne.
+#   make dev   albo   docker compose up
+# Hot-reload: kod montowany z dysku, backend tsx watch, frontend Vite HMR.
+# (Wariant produkcyjny jest w osobnym, tez kompletnym pliku: docker-compose.prod.yml)
 name: planista
+
 services:
   db:
     image: postgres:16-alpine
@@ -17,11 +13,9 @@ services:
       POSTGRES_PASSWORD: password
     volumes:
       - pgdata:/var/lib/postgresql/data
-    # Baza TYLKO w sieci wewnetrznej (internal: true) — niedostepna z internetu
-    # ani dla frontu. Widzi ja wylacznie backend.
+    # Baza tylko w sieci wewnetrznej (internal: true) — niedostepna z internetu ani dla frontu.
     networks:
       - internal
-    # Backend czeka az baza bedzie GOTOWA (nie tylko wystartowana) — wazne dla migracji.
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U postgres -d planista7']
       interval: 5s
@@ -29,28 +23,48 @@ services:
       retries: 10
 
   backend:
+    image: planista-backend-dev
     build:
       context: ./backend
-      target: runner
+      target: dev
+    command: npm run dev
     environment:
       PORT: 4001
-      # Backend laczy sie z baza po nazwie uslugi 'db' na 5432 (sieciowo, w 'internal').
       DATABASE_URL: postgresql://postgres:password@db:5432/planista7?schema=public
-    # Backend jest w obu sieciach: 'internal' (dostep do bazy) i 'edge' (front go wola).
+      # Sekrety deweloperskie — jawne, bo to tylko lokalne srodowisko.
+      JWT_ACCESS_SECRET: dev-access-secret-change-me
+      JWT_REFRESH_SECRET: dev-refresh-secret-change-me
+      CORS_ORIGIN: http://localhost:5174
+    volumes:
+      # Kod z dysku -> hot-reload; anonimowy wolumen chroni node_modules z obrazu.
+      - ./backend:/app
+      - /app/node_modules
     networks:
       - internal
       - edge
+    ports:
+      # Bind na localhost — nie wystawiamy dev na LAN.
+      - '127.0.0.1:4001:4001'
     depends_on:
       db:
         condition: service_healthy
 
   frontend:
+    image: planista-frontend-dev
     build:
       context: ./frontend
-      target: runner
-    # Front TYLKO w 'edge' — nie widzi bazy (nie ma jej po co widziec).
+      target: dev
+    command: npm run dev -- --host
+    environment:
+      # Vite proxuje /api na kontener backendu (nazwa uslugi w sieci compose).
+      VITE_PROXY_TARGET: http://backend:4001
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
     networks:
       - edge
+    ports:
+      - '127.0.0.1:5174:5174'
     depends_on:
       - backend
 
@@ -58,9 +72,8 @@ volumes:
   pgdata:
 
 networks:
-  # Warstwa "brzegowa": front <-> backend.
+  # Warstwa brzegowa: front <-> backend.
   edge:
-  # Warstwa wewnetrzna: backend <-> baza. internal: true = brak trasy do internetu,
-  # niedostepna spoza tych kontenerow (defense in depth).
+  # Warstwa wewnetrzna: backend <-> baza. internal: true = brak trasy do internetu.
   internal:
     internal: true

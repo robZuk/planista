@@ -1,26 +1,64 @@
-# Nadpisania PRODUKCYJNE — uzywane JAWNIE (override auto-dev sie nie zaladuje):
-#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build
-# Zbudowane obrazy, bez montowania kodu, restart polityki, sekrety z .env.prod.
+# Srodowisko PRODUKCYJNE — kompletne i samodzielne.
+#   make prod   albo   docker compose -f docker-compose.prod.yml up -d --build
+# Zbudowane obrazy: backend node dist (+ prisma migrate deploy), frontend nginx.
+# Na zewnatrz wystawiony jest TYLKO frontend (WEB_PORT). Sekrety z .env.prod (poza repo).
+name: planista
+
 services:
   db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: planista7
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - internal
     restart: unless-stopped
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres -d planista7']
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   backend:
-    # Osobny tag niz dev — buildy dev/prod nie nadpisuja sie nawzajem.
     image: planista-backend-prod
     build:
+      context: ./backend
       target: runner
-    restart: unless-stopped
-    # Sekrety prod (JWT, ew. nadpisania) z pliku poza repo — skopiuj z .env.prod.example.
+    environment:
+      PORT: 4001
+      DATABASE_URL: postgresql://postgres:password@db:5432/planista7?schema=public
+    # Sekrety prod (JWT, CORS) z pliku poza repo — skopiuj z .env.prod.example.
     env_file:
       - .env.prod
+    networks:
+      - internal
+      - edge
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
 
   frontend:
     image: planista-frontend-prod
     build:
+      context: ./frontend
       target: runner
+    networks:
+      - edge
     restart: unless-stopped
     ports:
-      # Jedyny port wystawiony na zewnatrz — nginx podaje SPA i proxuje /api na backend.
-      # WEB_PORT sterowany env (domyslnie 8080 lokalnie; na Mikrusie ustaw przydzielony port).
+      # Jedyny port na zewnatrz. Lokalnie 8080; na Mikrusie ustaw WEB_PORT na przydzielony.
       - '${WEB_PORT:-8080}:80'
+    depends_on:
+      - backend
+
+volumes:
+  pgdata:
+
+networks:
+  edge:
+  internal:
+    internal: true
