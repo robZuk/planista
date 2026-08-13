@@ -37,6 +37,13 @@ RUN npm ci --omit=dev
 COPY prisma ./prisma
 RUN npx prisma generate
 COPY --from=build /app/dist ./dist
+
+# Healthcheck: pyta /health przez node'a (slim nie ma curl/wget). Docker/orchestrator
+# wie wtedy, czy zyje sama APLIKACJA, a nie tylko proces. start-period daje czas na
+# migrate deploy + start serwera, zanim zaczniemy liczyc niepowodzenia.
+HEALTHCHECK --interval=30s --timeout=3s --start-period=30s --retries=3 \
+  CMD node -e "require('http').get('http://127.0.0.1:'+(process.env.PORT||4001)+'/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"
+
 # Na starcie: najpierw dogonienie migracji, potem serwer.
 # `exec` -> node zastepuje sh i staje sie PID 1, wiec dostaje SIGTERM bezposrednio
 # (czyste zamkniecie przy docker stop, bez czekania na SIGKILL).
