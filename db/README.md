@@ -58,14 +58,14 @@ niczego wystawionego na świat** bez wcześniejszej zmiany haseł.
 
 ```bash
 docker compose up -d
-docker exec -i planista7_db psql -U postgres -d planista7 -v ON_ERROR_STOP=1 < db/planista7-dump.sql
+docker exec -i planista-db-1 psql -U postgres -d planista7 -v ON_ERROR_STOP=1 < db/planista7-dump.sql
 ```
 
 Do czystej bazy (gdyby `planista7` nie istniała):
 
 ```bash
-docker exec planista7_db psql -U postgres -d postgres -c "CREATE DATABASE planista7;"
-docker exec -i planista7_db psql -U postgres -d planista7 -v ON_ERROR_STOP=1 < db/planista7-dump.sql
+docker exec planista-db-1 psql -U postgres -d postgres -c "CREATE DATABASE planista7;"
+docker exec -i planista-db-1 psql -U postgres -d planista7 -v ON_ERROR_STOP=1 < db/planista7-dump.sql
 ```
 
 ## Odświeżenie zrzutu

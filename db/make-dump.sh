@@ -5,7 +5,7 @@
 # Czysci na KOPII bazy, zeby nie ruszyc `planista7`. Uzycie: bash db/make-dump.sh
 set -euo pipefail
 
-CONTAINER=planista7_db
+CONTAINER=planista-db-1
 ZRODLO=planista7
 KOPIA=planista7_public
 KATALOG="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

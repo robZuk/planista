@@ -18,7 +18,7 @@ niż w planista6 (4000/5433/5173), więc oba projekty mogą działać równolegl
 ## Uruchamianie (dev)
 
 ```bash
-# 1. Baza (katalog główny) — kontener planista7_db, Postgres na :5434
+# 1. Baza (katalog główny) — kontener planista-db-1, Postgres na :5434
 docker compose up -d
 
 # 2. Backend (:4001)
