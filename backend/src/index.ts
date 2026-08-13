@@ -23,6 +23,12 @@ import usersRoutes from './routes/users';
 export function createApp(): Express {
   const app = express();
 
+  // Za odwrotnym proxy (nginx/edge) — ufamy 1 przeskokowi, zeby req.ip bral
+  // prawdziwy adres klienta z X-Forwarded-For. Bez tego rate-limit liczylby
+  // wszystkich pod jednym IP proxy. Wartosc 1 (nie `true`) nie pozwala podszyc sie
+  // naglowkiem, gdy ruch idzie prosto do backendu.
+  app.set('trust proxy', 1);
+
   // CORS — pozwala frontendowi (inny origin/port) wolac to API.
   app.use(cors({ origin: process.env.CORS_ORIGIN ?? 'http://localhost:5174' }));
 
