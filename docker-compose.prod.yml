@@ -22,4 +22,5 @@ services:
     restart: unless-stopped
     ports:
       # Jedyny port wystawiony na zewnatrz — nginx podaje SPA i proxuje /api na backend.
-      - '8080:80'
+      # WEB_PORT sterowany env (domyslnie 8080 lokalnie; na Mikrusie ustaw przydzielony port).
+      - '${WEB_PORT:-8080}:80'
