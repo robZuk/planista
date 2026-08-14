@@ -118,6 +118,9 @@ flowchart LR
 ### Bezpieczeństwo i niezawodność
 
 - **Segmentacja sieci** (edge / internal) — baza odcięta, tylko front wystawiony.
+- **Kontenery jako nie-root** (least privilege) — backend jako użytkownik `node`,
+  frontend na obrazie `nginx-unprivileged` (uid 101). Ewentualna kompromitacja
+  procesu nie daje roota w kontenerze.
 - **Rate-limit** na logowaniu + `trust proxy` (prawdziwe IP zza nginx).
 - **Graceful shutdown** (obsługa SIGTERM → czyste zamknięcie ~0,15 s zamiast SIGKILL).
 - **HEALTHCHECK** w obrazie backendu (Docker wie, czy żyje sama aplikacja).
