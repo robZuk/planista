@@ -6,6 +6,7 @@ name: Deploy
 on:
   push:
     branches: [main]
+  workflow_dispatch: # reczne odpalenie z zakladki Actions (bez zmiany kodu)
 
 # Uprawnienia tokena workflow: odczyt kodu + zapis pakietow (push do GHCR).
 permissions:
