@@ -6,6 +6,12 @@ name: Deploy
 on:
   push:
     branches: [main]
+    # Zmiany tylko w dokumentacji nie wywoluja deployu — nie ma po co przebudowywac
+    # obrazow i wdrazac, gdy kod sie nie zmienil. (Commit mieszany: dok + kod -> deploy.)
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.gitignore'
   workflow_dispatch: # reczne odpalenie z zakladki Actions (bez zmiany kodu)
 
 # Uprawnienia tokena workflow: odczyt kodu + zapis pakietow (push do GHCR).
