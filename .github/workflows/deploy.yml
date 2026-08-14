@@ -1,0 +1,71 @@
+# CD — na push do main: build obrazow -> GHCR -> deploy na Mikrus (SSH).
+# Krok deploy jest WARUNKOWY: odpala sie dopiero gdy ustawisz sekret MIKRUS_HOST
+# (czesc 3). Do tego czasu pierwsze przebiegi tylko buduja i wypychaja obrazy.
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+
+# Uprawnienia tokena workflow: odczyt kodu + zapis pakietow (push do GHCR).
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  OWNER: robzuk # GHCR wymaga malych liter (login to robZuk)
+
+jobs:
+  build-push-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Pobierz kod
+        uses: actions/checkout@v4
+
+      - name: Zaloguj do GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }} # token wstrzykiwany automatycznie
+
+      - name: Build + push backend
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          target: runner
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.OWNER }}/planista-backend:latest
+            ${{ env.REGISTRY }}/${{ env.OWNER }}/planista-backend:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build + push frontend
+        uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          target: runner
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.OWNER }}/planista-frontend:latest
+            ${{ env.REGISTRY }}/${{ env.OWNER }}/planista-frontend:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Deploy odpala sie DOPIERO gdy ustawisz sekret MIKRUS_HOST (czesc 3).
+      - name: Deploy na Mikrus (SSH)
+        if: ${{ secrets.MIKRUS_HOST != '' }}
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.MIKRUS_HOST }}
+          port: ${{ secrets.MIKRUS_PORT }}
+          username: ${{ secrets.MIKRUS_USER }}
+          key: ${{ secrets.MIKRUS_SSH_KEY }}
+          script: |
+            cd /srv/planista
+            git pull --ff-only
+            docker compose -f docker-compose.prod.yml pull
+            docker compose -f docker-compose.prod.yml up -d
+            docker image prune -f
