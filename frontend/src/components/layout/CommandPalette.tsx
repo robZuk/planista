@@ -2,7 +2,19 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTheme } from 'next-themes';
-import { Building2, GraduationCap, LogOut, Moon, Search, Sun, Undo2, User } from 'lucide-react';
+import {
+  BookMarked,
+  Building2,
+  GraduationCap,
+  Landmark,
+  Layers,
+  LogOut,
+  Moon,
+  Search,
+  Sun,
+  Undo2,
+  User,
+} from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import {
@@ -21,6 +33,9 @@ import { logoutRequest } from '@/api/auth';
 import { fetchInstructors } from '@/api/instructors';
 import { fetchSubjects } from '@/api/subjects';
 import { fetchBuildings } from '@/api/buildings';
+import { fetchFaculties } from '@/api/faculties';
+import { fetchFieldsOfStudy } from '@/api/fieldsOfStudy';
+import { fetchSpecializations } from '@/api/specializations';
 import { visibleGroups } from '@/lib/navigation';
 import { useAuthStore } from '@/store/authStore';
 
@@ -68,6 +83,21 @@ export function CommandPalette() {
     queryFn: fetchBuildings,
     enabled: open,
   });
+  const { data: faculties = [] } = useQuery({
+    queryKey: ['faculties'],
+    queryFn: fetchFaculties,
+    enabled: open,
+  });
+  const { data: fields = [] } = useQuery({
+    queryKey: ['fields-of-study'],
+    queryFn: () => fetchFieldsOfStudy(),
+    enabled: open,
+  });
+  const { data: specializations = [] } = useQuery({
+    queryKey: ['specializations'],
+    queryFn: () => fetchSpecializations(),
+    enabled: open,
+  });
 
   // Wyniki danych pokazujemy dopiero od 2 znakow — inaczej po otwarciu palety
   // wysypaloby sie kilkaset pozycji. Filtrujemy po podciagu i tniemy do MAX_RESULTS.
@@ -82,6 +112,9 @@ export function CommandPalette() {
     buildings.flatMap((b) => (b.rooms ?? []).map((r) => ({ ...r, buildingName: b.name }))),
     (r) => `${r.number} ${r.buildingName}`,
   );
+  const facultyHits = pick(faculties, (f) => f.name);
+  const fieldHits = pick(fields, (f) => f.name);
+  const specializationHits = pick(specializations, (s) => s.name);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -147,7 +180,7 @@ export function CommandPalette() {
           <CommandInput
             value={search}
             onValueChange={setSearch}
-            placeholder="Szukaj strony, prowadzacego, przedmiotu, sali…"
+            placeholder="Szukaj strony, prowadzacego, przedmiotu, sali, wydzialu, kierunku…"
           />
           <CommandList>
             <CommandEmpty>Nic nie pasuje do tego zapytania.</CommandEmpty>
@@ -213,6 +246,51 @@ export function CommandPalette() {
                     <Building2 />
                     {r.number}
                     <CommandShortcut>{r.buildingName}</CommandShortcut>
+                  </CommandItem>
+                ))}
+              </CommandGroup>
+            )}
+
+            {facultyHits.length > 0 && (
+              <CommandGroup heading="Wydzialy">
+                {facultyHits.map((f) => (
+                  <CommandItem
+                    key={f.id}
+                    value={`wydzial ${f.name}`}
+                    onSelect={() => run(() => navigate('/faculties'))}
+                  >
+                    <Landmark />
+                    {f.name}
+                  </CommandItem>
+                ))}
+              </CommandGroup>
+            )}
+
+            {fieldHits.length > 0 && (
+              <CommandGroup heading="Kierunki">
+                {fieldHits.map((f) => (
+                  <CommandItem
+                    key={f.id}
+                    value={`kierunek ${f.name}`}
+                    onSelect={() => run(() => navigate('/curriculum'))}
+                  >
+                    <BookMarked />
+                    {f.name}
+                  </CommandItem>
+                ))}
+              </CommandGroup>
+            )}
+
+            {specializationHits.length > 0 && (
+              <CommandGroup heading="Specjalnosci">
+                {specializationHits.map((s) => (
+                  <CommandItem
+                    key={s.id}
+                    value={`specjalnosc ${s.name}`}
+                    onSelect={() => run(() => navigate('/curriculum'))}
+                  >
+                    <Layers />
+                    {s.name}
                   </CommandItem>
                 ))}
               </CommandGroup>
