@@ -38,6 +38,11 @@ COPY prisma ./prisma
 RUN npx prisma generate
 COPY --from=build /app/dist ./dist
 
+# Nie-root: obraz node ma juz uzytkownika 'node' (uid 1000). Aplikacja tylko czyta
+# pliki (root-owned, world-readable), a migracje/serwer nie pisza po dysku, wiec
+# dziala bez roota. Least privilege — kompromitacja procesu nie daje roota w kontenerze.
+USER node
+
 # Healthcheck: pyta /health przez node'a (slim nie ma curl/wget). Docker/orchestrator
 # wie wtedy, czy zyje sama APLIKACJA, a nie tylko proces. start-period daje czas na
 # migrate deploy + start serwera, zanim zaczniemy liczyc niepowodzenia.

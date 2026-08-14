@@ -52,8 +52,9 @@ services:
       - edge
     restart: unless-stopped
     ports:
-      # Jedyny port na zewnatrz. Lokalnie 8080; na Mikrusie ustaw WEB_PORT na przydzielony.
-      - '${WEB_PORT:-8080}:80'
+      # Kontener nginx (unprivileged) sluchaja na 8080. Lokalnie WEB_PORT=8080;
+      # na Mikrusie ustaw WEB_PORT na przydzielony port.
+      - '${WEB_PORT:-8080}:8080'
     depends_on:
       - backend
 
