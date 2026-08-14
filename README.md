@@ -1,146 +1,179 @@
-# Planista 7
+# Planista
 
-System układania planu zajęć dla uczelni. **Backend przeniesiony z planista6 bez zmian
-logiki**, frontend napisany od nowa w oparciu o shadcn/ui (preset Nova, baza Radix).
+> System układania planu zajęć dla uczelni — od siatki godzin, przez grupy i sale,
+> po plan tygodnia i cały semestr, z automatycznym wykrywaniem konfliktów.
 
-## Stack
+[![CI](https://github.com/robZuk/planista/actions/workflows/ci.yml/badge.svg)](https://github.com/robZuk/planista/actions/workflows/ci.yml)
+[![Deploy](https://github.com/robZuk/planista/actions/workflows/deploy.yml/badge.svg)](https://github.com/robZuk/planista/actions/workflows/deploy.yml)
 
-- **Backend:** Node.js + Express + TypeScript (port **4001**)
-- **Baza:** PostgreSQL 16 w Dockerze (host port **5434**), ORM Prisma
-- **Frontend:** React 19 + Vite + TypeScript + Tailwind 4 + shadcn/ui (port **5174**)
+🔗 **Demo na żywo:** [srv71-20250.wykr.es](https://srv71-20250.wykr.es) · 🔑 zaloguj się jako `admin@umg.edu.pl` / `Admin1234!`
 
-Porty są inne niż w planista6 (4000/5433/5173), więc **oba projekty mogą działać równolegle**.
+![Plan zajęć — wzorzec tygodnia](docs/screenshots/plan-wzorzec.png)
 
-### Biblioteki frontu
+---
 
-| Obszar | Wybór |
+## Czym jest Planista
+
+Aplikacja webowa, w której dziekanat układa plan zajęć dla całej uczelni: definiuje
+zasoby (sale, prowadzących, bloki czasowe), buduje **siatki godzin** kierunków,
+generuje **grupy** studenckie, a następnie układa **wzorzec tygodnia** metodą
+przeciągnij-i-upuść i **generuje z niego terminy na cały semestr** — pilnując
+konfliktów sal, prowadzących i grup.
+
+Projekt powstał jako pełny materiał portfolio: **aplikacja + DevOps** (konteneryzacja,
+CI/CD, wdrożenie na własny VPS z HTTPS).
+
+## ✨ Funkcje
+
+- **Plan zajęć — wzorzec tygodnia:** siatka dzień × godzina, układanie zajęć
+  **drag & drop** z backlogu „Do zaplanowania", kolory wg formy (wykład/ćwiczenia/lab),
+  **wykrywanie konfliktów** (sala / prowadzący / grupa) na żywo.
+- **Generator terminów:** ze wzorca powstają terminy na cały semestr wg kalendarza,
+  z **odwoływaniem i przenoszeniem** zajęć (jeden termin albo cała seria) i dniami wolnymi.
+- **Siatka godzin (curriculum):** kierunki, specjalności, przedmioty, wersje siatek
+  z podziałem na semestry i typy zajęć.
+- **Grupy:** kreator hierarchii (wykład → ćwiczenia → laboratorium), kopiowanie rocznika na następny rok.
+- **Zasoby:** pełny CRUD wydziałów, budynków i sal, prowadzących, bloków czasowych.
+- **Dashboardy per rola:** kafelki, wykres obciążenia tygodnia, pasek statusów terminów;
+  własny plan prowadzącego i studenta.
+- **Użytkownicy i role:** ADMIN / dziekanat / prowadzący / student, **impersonacja**
+  („zobacz jako…"), paleta poleceń **Ctrl+K**.
+- **Auth:** JWT z tokenem odświeżania (unieważnialnym), role, ochrona tras.
+
+## 🖥️ Zrzuty ekranu
+
+| Panel główny | Kalendarz semestru |
 |---|---|
-| Komponenty UI | shadcn/ui (preset `nova`, base `radix`), ikony lucide |
-| Layout | shadcn `Sidebar` (zwijany, mobile jako Sheet) + `Breadcrumb` |
-| Tabele | TanStack Table + shadcn `Table` (sortowanie, filtr, paginacja) |
-| Formularze | react-hook-form + zod + shadcn `Field` |
-| Dane serwera | TanStack Query + axios |
-| Stan lokalny | zustand |
-| Powiadomienia | sonner (`toast`) |
-| Wykresy | shadcn `Chart` (recharts) |
-| Paleta poleceń | shadcn `Command` + `CommandDialog` (Ctrl+K) |
-| Drag & drop planu | dnd-kit |
-| Motyw jasny/ciemny | next-themes |
+| ![Panel główny](docs/screenshots/dashboard.png) | ![Kalendarz semestru](docs/screenshots/kalendarz.png) |
 
-## Uruchomienie (dev)
+| Siatka godzin | Grupy — hierarchia (wykład → ćwiczenia → lab) |
+|---|---|
+| ![Siatka godzin](docs/screenshots/siatka.png) | ![Grupy](docs/screenshots/grupy.png) |
 
-```bash
-# 1. Baza danych (w katalogu głównym)
-docker compose up -d
+**Użytkownicy i role — impersonacja („Zobacz jako…")**
 
-# 2. Backend
-cd backend
-cp .env.example .env      # przy pierwszym uruchomieniu
-npm install
-npx prisma migrate deploy # albo: npm run prisma:migrate
-npm run db:seed
-npm run dev               # http://localhost:4001
+![Użytkownicy](docs/screenshots/uzytkownicy.png)
 
-# 3. Frontend (w drugim terminalu)
-cd frontend
-npm install
-npm run dev               # http://localhost:5174
+## 🧱 Stack technologiczny
+
+| Warstwa | Technologie |
+|---|---|
+| **Frontend** | React 19, Vite, TypeScript, Tailwind 4, shadcn/ui, TanStack Query/Table, zustand, react-hook-form + zod, dnd-kit, Recharts |
+| **Backend** | Node.js 22, Express, TypeScript, Prisma ORM, JWT, bcrypt |
+| **Baza** | PostgreSQL 16 |
+| **Testy** | Vitest (logika domenowa, Prisma mockowana) |
+| **DevOps** | Docker (multi-stage), Docker Compose, nginx, GitHub Actions (CI + CD), GHCR, VPS (Ubuntu) |
+
+## 🏗️ Architektura
+
+Cały system działa w kontenerach. Usługi są w **dwóch sieciach** (defense in depth):
+na zewnątrz wystawiony jest **tylko** frontend, baza jest odcięta od internetu.
+
+```mermaid
+flowchart TB
+    user([Użytkownik]) -->|HTTPS| fe
+    subgraph host["VPS · Docker"]
+        subgraph edge["sieć edge"]
+            fe["frontend<br/>nginx + SPA"]
+            be["backend<br/>Node + Express"]
+        end
+        subgraph internal["sieć internal · internal: true (bez internetu)"]
+            db[("PostgreSQL")]
+        end
+        fe -->|/api| be
+        be --> db
+    end
 ```
 
-> Port frontu jest ustawiony na sztywno (`strictPort`). Jeśli 5174 jest zajęty, Vite
-> **zatrzyma się z błędem** zamiast po cichu przejść na kolejny wolny port — inaczej
-> łatwo pomylić planista7 z uruchomioną obok planista6.
+- **frontend** (nginx) serwuje statyczny build SPA i proxuje `/api` na backend.
+- **backend** jest mostem: w `edge` (woła go front) i `internal` (dostęp do bazy).
+- **db** jest **tylko** w `internal` — brak portu na hoście, brak trasy do internetu,
+  niewidoczna dla frontu.
+
+## 🚀 DevOps
+
+To rdzeń projektu — pełny łańcuch od kodu do działającej produkcji.
+
+### CI/CD
+
+```mermaid
+flowchart LR
+    push["git push · main"] --> ci["CI<br/>lint + test + build"]
+    push --> cd["CD"]
+    cd --> build["build obrazów"] --> ghcr[("GHCR<br/>rejestr obrazów")]
+    ghcr --> deploy["deploy przez SSH"]
+    deploy --> prod["docker compose pull + up -d<br/>(VPS)"]
+```
+
+- **CI** (`ci.yml`): na push i PR — lint, testy i build backendu i frontu (osobne joby).
+- **CD** (`deploy.yml`): na push do `main` — build obrazów → push do **GHCR** →
+  **SSH na VPS** → `git pull` + `docker compose pull` + `up -d`. Efekt: `git push` = wdrożenie.
+
+### Konteneryzacja
+
+- **Multi-stage Dockerfile** — osobne targety: `dev` (hot-reload), `build`, `runner` (prod).
+- **Dwie ścieżki:** dev (Vite HMR + `tsx watch`, kod montowany) i prod (zbudowane obrazy,
+  backend `node dist` z `prisma migrate deploy`, frontend serwowany przez nginx).
+
+### Bezpieczeństwo i niezawodność
+
+- **Segmentacja sieci** (edge / internal) — baza odcięta, tylko front wystawiony.
+- **Rate-limit** na logowaniu + `trust proxy` (prawdziwe IP zza nginx).
+- **Graceful shutdown** (obsługa SIGTERM → czyste zamknięcie ~0,15 s zamiast SIGKILL).
+- **HEALTHCHECK** w obrazie backendu (Docker wie, czy żyje sama aplikacja).
+- **HTTPS** na własnym VPS (Mikrus + darmowa domena `wykr.es`, SSL na brzegu).
+- Sekrety poza repo (`.env.prod` w `.gitignore`).
+
+## ▶️ Uruchomienie lokalne
+
+Wymagany Docker. Cały system startuje jednym poleceniem:
+
+```bash
+docker compose up          # DEV — hot-reload, http://localhost:5174
+# lub: make dev
+```
+
+Wersja produkcyjna lokalnie (nginx, zbudowane obrazy):
+
+```bash
+docker compose -f docker-compose.prod.yml up --build   # http://localhost:8080
+# lub: make prod
+```
+
+Skróty w `Makefile`: `make dev`, `make prod`, `make down`, `make logs` (`make` = lista celów).
+
+### Konta demo
+
+| Rola | Email | Hasło |
+|---|---|---|
+| ADMIN | admin@umg.edu.pl | `Admin1234!` |
+| Dziekanat | dziekanat@umg.edu.pl | `Dziekanat1234!` |
+| Prowadzący | prowadzacy@umg.edu.pl | `Prowadzacy1234!` |
+| Student | student@umg.edu.pl | `Student1234!` |
 
 ### Dane
 
-W bazie siedzi **zaimportowana kopia z `backup.sql`** (rok 2024/2025): 21 prowadzących,
-191 przedmiotów, 5 siatek godzin z 423 wpisami, 81 grup, 28 sal, 243 wzorce tygodnia
-i 3327 terminów (1.10.2024 – 31.01.2025). Kopia pochodzi ze starszego schematu —
-procedura przeliczenia opisana jest w [`scripts/import-backupu/README.md`](scripts/import-backupu/README.md).
+Baza zawiera realistyczny zbiór (rok 2024/2025): 21 prowadzących, 191 przedmiotów,
+81 grup, 28 sal, 243 wzorce tygodnia i 3327 terminów. Zrzut w `db/planista7-dump.sql`
+(oczyszczony z tokenów sesji, patrz [`db/README.md`](db/README.md)).
 
-Żeby wrócić do małego zestawu przykładowego, wystarczy `npm run db:seed` w `backend/`.
+## 🧪 Testy
 
-### Konta testowe (po seedzie)
-
-| Rola        | Email                   | Hasło            |
-|-------------|-------------------------|------------------|
-| ADMIN       | admin@umg.edu.pl        | `Admin1234!`     |
-| DEAN_OFFICE | dziekanat@umg.edu.pl    | `Dziekanat1234!` |
-| INSTRUCTOR  | prowadzacy@umg.edu.pl   | `Prowadzacy1234!`|
-| STUDENT     | student@umg.edu.pl      | `Student1234!`   |
-
-## Konteneryzacja i architektura sieci
-
-Cały system uruchamia się w kontenerach (Docker Compose). Każde środowisko ma
-**własny, kompletny plik** (bez sklejania):
-
-- **dev** — `docker-compose.yml` (`docker compose up` / `make dev`): hot-reload —
-  backend `tsx watch`, frontend Vite HMR, kod montowany z dysku.
-- **prod** — `docker-compose.prod.yml` (`docker compose -f docker-compose.prod.yml up`
-  / `make prod`): zbudowane obrazy — backend `node dist` z `prisma migrate deploy` na
-  starcie, frontend jako statyki serwowane przez **nginx** (SPA + proxy `/api`).
-
-Wygodne skróty w `Makefile`: `make dev`, `make prod`, `make down`, `make logs`
-(samo `make` wypisze listę).
-
-### Sieć — defense in depth
-
-Usługi nie stoją w jednej płaskiej sieci. Są **dwie**, a baza jest odcięta:
-
-```
-   swiat / host
-       |
-       |  wystawiony jest TYLKO frontend
-       |  (dev: 127.0.0.1:5174 · prod: :WEB_PORT -> nginx)
-       v
- +-- edge -------------------------------------+
- |   frontend  --/api-->  backend              |
- +-------------------------------------+-------+
-                                       |  (backend jest tez w internal)
- +-- internal (internal: true) --------+-------+
- |   backend  ------------->  db (Postgres)     |
- +---------------------------------------------+
-       ^                                   ^
-       |  brak trasy do internetu          |  brak portu na hoscie
+```bash
+cd backend && npm test     # logika planu: walidacja, konflikty, czas (Prisma mockowana)
+cd frontend && npm test    # czysta logika domenowa (semester, konflikty, zakres planu)
 ```
 
-Konkretnie:
-- **`db` (Postgres)** jest **tylko** w sieci `internal` (`internal: true`): nie ma
-  portu na hoście, nie ma trasy do internetu i **nie widzi jej frontend** — dosięga
-  jej wyłącznie backend.
-- **`frontend`** jest tylko w `edge` — nie ma dostępu do bazy (nie ma po co).
-- **`backend`** jest mostem między warstwami (`edge` + `internal`).
-- W prod **na zewnątrz wystawiony jest wyłącznie frontend**; backend i baza są
-  osiągalne tylko wewnątrz sieci Compose.
-- W dev porty backendu/frontu bindowane są na `127.0.0.1` (niewidoczne z LAN-u).
+## 📁 Struktura
 
-Dodatkowo backend ma **rate-limit na logowaniu** (10 nieudanych prób / 15 min / IP)
-oraz `trust proxy`, by za nginx liczyć prawdziwe IP klienta.
+```
+backend/    Express + Prisma (routes / controllers / services / lib)
+frontend/   React + Vite (pages / api / store / lib / components)
+db/         zrzut bazy + skrypt czyszczenia
+docs/       dokumentacja (model danych, deploy na VPS)
+.github/    workflows CI/CD
+docker-compose.yml · docker-compose.prod.yml · Makefile
+```
 
-Wdrożenie produkcyjne opisuje [`docs/deploy-mikrus.md`](docs/deploy-mikrus.md).
-
-## Postęp (fazy)
-
-- [x] **Faza 0** — Fundamenty: kopia backendu (porty 4001/5434), szkielet Vite + Tailwind 4 + shadcn, motyw granatowy, `/health`
-- [x] **Faza 1** — Layout: AppShell na shadcn Sidebar (zwijany, grupy sekcji), breadcrumbs, menu użytkownika z wyborem motywu
-- [x] **Faza 2** — Auth: logowanie (rhf + zod), store zustand, `ProtectedRoute`, interceptor odświeżania tokenu
-- [x] **Faza 3** — Generyczny `DataTable` (TanStack Table) + zasoby: wydziały, budynki/sale (Accordion), prowadzący, bloki czasowe — pełny CRUD z `AlertDialog` przy usuwaniu
-- [x] **Faza 4** — Siatka godzin: zakładki (siatki / kierunki i specjalności / przedmioty), edytor wersji z semestrami w Accordionie, Combobox przedmiotów z wyszukiwaniem po kodzie
-- [x] **Faza 5** — Grupy: dwustopniowy kreator (parametry → podgląd propozycji → zapis), drzewo hierarchii z wcięciami, edycja i kasowanie rocznika
-- [x] **Faza 6** — Plan zajęć: wzorzec tygodnia (siatka dzień × godzina, drag&drop, dialog zajęć, bilans terminów, komunikaty konfliktów po polsku)
-- [x] **Faza 7** — Plan zajęć: kalendarz tygodniowy z datami, generator terminów, odwoływanie i przenoszenie zajęć (jeden termin / cała seria), dni wolne
-- [x] **Faza 8** — Dashboardy per rola: kafelki, wykres obciążenia tygodnia, pasek statusów terminów (paleta przeszła walidator CVD), własny plan prowadzącego i studenta
-- [x] **Faza 9** — Użytkownicy: CRUD kont z powiązaniami zależnymi od roli, impersonacja („zobacz jako" + pasek powrotu), paleta poleceń Ctrl+K
-
-## Impersonacja — jak to działa
-
-Administrator wybiera w tabelce kont **Zobacz jako…**. Backend wystawia wtedy krótki
-(2 h) token na wskazane konto, a front chowa sesję admina w `originalAuth`. Od tej pory
-aplikacja wygląda dokładnie tak, jak u podglądanej osoby — z żółtym paskiem u góry
-i przyciskiem powrotu (jest też pozycja w palecie Ctrl+K).
-
-Dwie rzeczy, które zamykają podgląd same z siebie:
-
-- **odświeżenie strony** — do `localStorage` zapisujemy tylko sesję oryginalną,
-- **wygaśnięcie tokenu podglądowego** — jest nieodnawialny, więc pierwszy 401 wraca
-  do konta admina zamiast wylogowywać z aplikacji.
+Szczegóły domenowe: [`docs/model-danych.md`](docs/model-danych.md) ·
+wdrożenie: [`docs/deploy-mikrus.md`](docs/deploy-mikrus.md).
