@@ -9,7 +9,6 @@ import {
 import { Separator } from '@/components/ui/separator';
 import { SidebarInset, SidebarProvider, SidebarTrigger } from '@/components/ui/sidebar';
 import { AppSidebar } from './AppSidebar';
-import { CommandPalette } from './CommandPalette';
 import { ImpersonationBanner } from './ImpersonationBanner';
 import { breadcrumbFor } from '@/lib/navigation';
 
@@ -50,10 +49,6 @@ export function AppShell() {
                 </BreadcrumbItem>
               </BreadcrumbList>
             </Breadcrumb>
-
-            <div className="ml-auto">
-              <CommandPalette />
-            </div>
           </header>
         </div>
 
