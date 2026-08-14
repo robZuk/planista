@@ -40,7 +40,6 @@ export function AppSidebar() {
                 </div>
                 <div className="grid flex-1 text-left leading-tight">
                   <span className="truncate font-heading font-semibold">Planista</span>
-                  <span className="truncate text-xs text-muted-foreground">UMG</span>
                 </div>
               </NavLink>
             </SidebarMenuButton>
