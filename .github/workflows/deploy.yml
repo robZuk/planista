@@ -19,6 +19,10 @@ env:
 jobs:
   build-push-deploy:
     runs-on: ubuntu-latest
+    # Sekret zmapowany na env — bo kontekst 'secrets' NIE jest dozwolony w 'if',
+    # a 'env' juz tak. Dzieki temu krok deploy mozna warunkowac na obecnosc sekretu.
+    env:
+      MIKRUS_HOST: ${{ secrets.MIKRUS_HOST }}
     steps:
       - name: Pobierz kod
         uses: actions/checkout@v4
@@ -56,7 +60,7 @@ jobs:
 
       # Deploy odpala sie DOPIERO gdy ustawisz sekret MIKRUS_HOST (czesc 3).
       - name: Deploy na Mikrus (SSH)
-        if: ${{ secrets.MIKRUS_HOST != '' }}
+        if: ${{ env.MIKRUS_HOST != '' }}
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.MIKRUS_HOST }}
