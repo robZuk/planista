@@ -1,7 +1,7 @@
-import type { Request, Response } from 'express';
 import type { SemesterCalendar, SemesterType, StudyMode } from '@prisma/client';
 import { prisma } from '../lib/prisma';
-import { isNotFoundError, isUniqueConstraintError } from '../lib/prismaErrors';
+import { AppError } from '../lib/AppError';
+import { asyncHandler } from '../middleware/asyncHandler';
 import { getCallerFacultyId } from '../lib/callerFaculty';
 import { semesterTypeOf } from '../lib/semester';
 
@@ -76,37 +76,32 @@ function weeksBetween(start: Date, end: Date): number {
   return Math.max(0, Math.round(ms / (7 * 24 * 60 * 60 * 1000)));
 }
 
-export async function getAll(req: Request, res: Response): Promise<void> {
-  try {
-    // Dziekanat widzi wylacznie swoj wydzial (wczesniej takze kalendarze ogolnouczelniane,
-    // bo byly jego fallbackiem). Konto bez przypisanego wydzialu nie ma czego ogladac —
-    // pusta lista jest tu poprawna odpowiedzia, nie bledem.
-    const myFacultyId =
-      req.user!.role === 'DEAN_OFFICE' ? await getCallerFacultyId(req.user!.id) : null;
-    if (req.user!.role === 'DEAN_OFFICE' && !myFacultyId) {
-      res.json({ data: [] });
-      return;
-    }
-
-    const data = await prisma.semesterCalendar.findMany({
-      where: myFacultyId ? { facultyId: myFacultyId } : {},
-      include: calendarInclude,
-      // Najnowszy rok akademicki na gorze — to on jest "biezacy" i zgodny z aktualnym
-      // planem/siatka; starsze lata schodza nizej. W obrebie roku kolejnosc stala
-      // (typ semestru -> tryb -> wydzial); czworka [academicYear, semesterType, studyMode,
-      // facultyId] to klucz unikalny.
-      orderBy: [{ academicYear: 'desc' }, { semesterType: 'asc' }, { studyMode: 'asc' }, { facultyId: 'asc' }],
-    });
-
-    // Kalendarz sam z siebie nie mowi, co od niego zalezy — bez tego edycja dat i usuwanie
-    // odbywaly sie na slepo (skrocenie zakresu konczylo sie dopiero bledem 409 z serwera).
-    const usage = await buildUsage(data);
-    res.json({ data: data.map((calendar, index) => ({ ...calendar, ...usage[index] })) });
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: 'Blad serwera' });
+export const getAll = asyncHandler(async (req, res) => {
+  // Dziekanat widzi wylacznie swoj wydzial (wczesniej takze kalendarze ogolnouczelniane,
+  // bo byly jego fallbackiem). Konto bez przypisanego wydzialu nie ma czego ogladac —
+  // pusta lista jest tu poprawna odpowiedzia, nie bledem.
+  const myFacultyId =
+    req.user!.role === 'DEAN_OFFICE' ? await getCallerFacultyId(req.user!.id) : null;
+  if (req.user!.role === 'DEAN_OFFICE' && !myFacultyId) {
+    res.json({ data: [] });
+    return;
   }
-}
+
+  const data = await prisma.semesterCalendar.findMany({
+    where: myFacultyId ? { facultyId: myFacultyId } : {},
+    include: calendarInclude,
+    // Najnowszy rok akademicki na gorze — to on jest "biezacy" i zgodny z aktualnym
+    // planem/siatka; starsze lata schodza nizej. W obrebie roku kolejnosc stala
+    // (typ semestru -> tryb -> wydzial); czworka [academicYear, semesterType, studyMode,
+    // facultyId] to klucz unikalny.
+    orderBy: [{ academicYear: 'desc' }, { semesterType: 'asc' }, { studyMode: 'asc' }, { facultyId: 'asc' }],
+  });
+
+  // Kalendarz sam z siebie nie mowi, co od niego zalezy — bez tego edycja dat i usuwanie
+  // odbywaly sie na slepo (skrocenie zakresu konczylo sie dopiero bledem 409 z serwera).
+  const usage = await buildUsage(data);
+  res.json({ data: data.map((calendar, index) => ({ ...calendar, ...usage[index] })) });
+});
 
 /**
  * Zakladanie kalendarza. Kazdy wiersz nalezy do wydzialu, wiec wspolne daty dla calej
@@ -116,182 +111,140 @@ export async function getAll(req: Request, res: Response): Promise<void> {
  * Wydzialy, ktore juz maja kalendarz dla tej czworki, sa pomijane (`skipDuplicates`) —
  * zalozenie hurtowe nie moze po cichu nadpisac dat ustawionych recznie przez dziekanat.
  */
-export async function create(req: Request, res: Response): Promise<void> {
-  try {
-    const { academicYear, semesterType, studyMode, startDate, endDate, facultyId, allFaculties } =
-      req.body as {
-        academicYear?: string;
-        semesterType?: SemesterType;
-        studyMode?: StudyMode;
-        startDate?: string;
-        endDate?: string;
-        facultyId?: string;
-        allFaculties?: boolean;
-      };
-    if (!academicYear || !semesterType || !studyMode || !startDate || !endDate) {
-      res.status(400).json({ error: 'Brakujace wymagane pola' });
-      return;
-    }
-    const start = new Date(startDate);
-    const end = new Date(endDate);
-    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
-      res.status(400).json({ error: 'Nieprawidlowy format daty' });
-      return;
-    }
-    if (start >= end) {
-      res.status(400).json({ error: 'Data poczatku musi byc wczesniejsza niz data konca' });
-      return;
-    }
-
-    // Dziekanat zaklada wylacznie swoj wydzial i nie ma dostepu do wariantu hurtowego.
-    const isDeanOffice = req.user!.role === 'DEAN_OFFICE';
-    const ownFacultyId = isDeanOffice ? await getCallerFacultyId(req.user!.id) : null;
-    if (isDeanOffice && !ownFacultyId) {
-      res.status(403).json({ error: 'Konto dziekanatu bez przypisanego wydzialu' });
-      return;
-    }
-
-    const targets = isDeanOffice
-      ? [ownFacultyId!]
-      : allFaculties
-        ? (await prisma.faculty.findMany({ select: { id: true } })).map((faculty) => faculty.id)
-        : facultyId
-          ? [facultyId]
-          : [];
-    if (targets.length === 0) {
-      res.status(400).json({
-        error: allFaculties ? 'Brak wydzialow w systemie' : 'Kalendarz wymaga wskazania wydzialu',
-      });
-      return;
-    }
-
-    const shared = {
-      academicYear,
-      semesterType,
-      studyMode,
-      startDate: start,
-      endDate: end,
-      teachingWeeks: weeksBetween(start, end),
+export const create = asyncHandler(async (req, res) => {
+  const { academicYear, semesterType, studyMode, startDate, endDate, facultyId, allFaculties } =
+    req.body as {
+      academicYear?: string;
+      semesterType?: SemesterType;
+      studyMode?: StudyMode;
+      startDate?: string;
+      endDate?: string;
+      facultyId?: string;
+      allFaculties?: boolean;
     };
+  if (!academicYear || !semesterType || !studyMode || !startDate || !endDate) {
+    throw new AppError(400, 'Brakujace wymagane pola');
+  }
+  const start = new Date(startDate);
+  const end = new Date(endDate);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+    throw new AppError(400, 'Nieprawidlowy format daty');
+  }
+  if (start >= end) {
+    throw new AppError(400, 'Data poczatku musi byc wczesniejsza niz data konca');
+  }
 
-    if (targets.length > 1) {
-      const { count } = await prisma.semesterCalendar.createMany({
-        data: targets.map((id) => ({ ...shared, facultyId: id })),
-        skipDuplicates: true,
-      });
-      const skipped = targets.length - count;
-      res.status(201).json({
-        data: null,
-        message:
-          `Kalendarz zalozony dla ${count} wydzialow` +
-          `${skipped > 0 ? ` (${skipped} pominieto — maja juz wlasny)` : ''}`,
-      });
-      return;
-    }
+  // Dziekanat zaklada wylacznie swoj wydzial i nie ma dostepu do wariantu hurtowego.
+  const isDeanOffice = req.user!.role === 'DEAN_OFFICE';
+  const ownFacultyId = isDeanOffice ? await getCallerFacultyId(req.user!.id) : null;
+  if (isDeanOffice && !ownFacultyId) {
+    throw new AppError(403, 'Konto dziekanatu bez przypisanego wydzialu');
+  }
 
-    const data = await prisma.semesterCalendar.create({
-      data: { ...shared, facultyId: targets[0]! },
-      include: calendarInclude,
+  const targets = isDeanOffice
+    ? [ownFacultyId!]
+    : allFaculties
+      ? (await prisma.faculty.findMany({ select: { id: true } })).map((faculty) => faculty.id)
+      : facultyId
+        ? [facultyId]
+        : [];
+  if (targets.length === 0) {
+    throw new AppError(
+      400,
+      allFaculties ? 'Brak wydzialow w systemie' : 'Kalendarz wymaga wskazania wydzialu',
+    );
+  }
+
+  const shared = {
+    academicYear,
+    semesterType,
+    studyMode,
+    startDate: start,
+    endDate: end,
+    teachingWeeks: weeksBetween(start, end),
+  };
+
+  if (targets.length > 1) {
+    const { count } = await prisma.semesterCalendar.createMany({
+      data: targets.map((id) => ({ ...shared, facultyId: id })),
+      skipDuplicates: true,
     });
-    res.status(201).json({ data, message: 'Kalendarz semestru utworzony' });
-  } catch (error) {
-    if (isUniqueConstraintError(error)) {
-      res.status(409).json({ error: 'Kalendarz dla tego semestru, trybu i wydzialu juz istnieje' });
-      return;
-    }
-    console.error(error);
-    res.status(500).json({ error: 'Blad serwera' });
-  }
-}
-
-export async function update(req: Request, res: Response): Promise<void> {
-  try {
-    const { startDate, endDate } = req.body as { startDate?: string; endDate?: string };
-    const current = await prisma.semesterCalendar.findUnique({ where: { id: req.params.id } });
-    if (!current) {
-      res.status(404).json({ error: 'Kalendarz nie znaleziony' });
-      return;
-    }
-    if (req.user!.role === 'DEAN_OFFICE') {
-      const myFacultyId = await getCallerFacultyId(req.user!.id);
-      if (!myFacultyId || current.facultyId !== myFacultyId) {
-        res.status(403).json({ error: 'Mozesz edytowac tylko kalendarz swojego wydzialu' });
-        return;
-      }
-    }
-
-    const newStart = startDate ? new Date(startDate) : current.startDate;
-    const newEnd = endDate ? new Date(endDate) : current.endDate;
-    if (Number.isNaN(newStart.getTime()) || Number.isNaN(newEnd.getTime())) {
-      res.status(400).json({ error: 'Nieprawidlowy format daty' });
-      return;
-    }
-    if (newStart >= newEnd) {
-      res.status(400).json({ error: 'Data poczatku musi byc wczesniejsza niz data konca' });
-      return;
-    }
-
-    // Nie pozwol skrocic semestru, jesli zostana zajecia poza nowym zakresem. Patrzymy
-    // wylacznie na wlasny wydzial i wlasny tryb studiow (tryb przez siatke — termin go
-    // nie zna): drugi tryb ma wlasny kalendarz i granice, wiec nie ma prawa blokowac tego.
-    const shrinkingStart = newStart > current.startDate;
-    const shrinkingEnd = newEnd < current.endDate;
-    if (shrinkingStart || shrinkingEnd) {
-      const cutEntry = await prisma.scheduleEntry.findFirst({
-        where: {
-          status: { not: 'CANCELLED' },
-          curriculumEntry: { curriculumVersion: { is: { studyMode: current.studyMode } } },
-          facultyId: current.facultyId,
-          OR: [
-            ...(shrinkingStart ? [{ date: { gte: current.startDate, lt: newStart } }] : []),
-            ...(shrinkingEnd ? [{ date: { gt: newEnd, lte: current.endDate } }] : []),
-          ],
-        },
-      });
-      if (cutEntry) {
-        res.status(409).json({ error: 'Nie mozna skrocic semestru — istnieja zajecia poza nowym zakresem dat' });
-        return;
-      }
-    }
-
-    const data = await prisma.semesterCalendar.update({
-      where: { id: req.params.id },
-      data: { startDate: newStart, endDate: newEnd, teachingWeeks: weeksBetween(newStart, newEnd) },
-      include: calendarInclude,
+    const skipped = targets.length - count;
+    res.status(201).json({
+      data: null,
+      message:
+        `Kalendarz zalozony dla ${count} wydzialow` +
+        `${skipped > 0 ? ` (${skipped} pominieto — maja juz wlasny)` : ''}`,
     });
-    res.json({ data, message: 'Kalendarz zaktualizowany' });
-  } catch (error) {
-    if (isNotFoundError(error)) {
-      res.status(404).json({ error: 'Kalendarz nie znaleziony' });
-      return;
-    }
-    console.error(error);
-    res.status(500).json({ error: 'Blad serwera' });
+    return;
   }
-}
 
-export async function remove(req: Request, res: Response): Promise<void> {
-  try {
-    const current = await prisma.semesterCalendar.findUnique({ where: { id: req.params.id } });
-    if (!current) {
-      res.status(404).json({ error: 'Kalendarz nie znaleziony' });
-      return;
+  const data = await prisma.semesterCalendar.create({
+    data: { ...shared, facultyId: targets[0]! },
+    include: calendarInclude,
+  });
+  res.status(201).json({ data, message: 'Kalendarz semestru utworzony' });
+});
+
+export const update = asyncHandler(async (req, res) => {
+  const { startDate, endDate } = req.body as { startDate?: string; endDate?: string };
+  const current = await prisma.semesterCalendar.findUnique({ where: { id: req.params.id } });
+  if (!current) throw new AppError(404, 'Kalendarz nie znaleziony');
+  if (req.user!.role === 'DEAN_OFFICE') {
+    const myFacultyId = await getCallerFacultyId(req.user!.id);
+    if (!myFacultyId || current.facultyId !== myFacultyId) {
+      throw new AppError(403, 'Mozesz edytowac tylko kalendarz swojego wydzialu');
     }
-    if (req.user!.role === 'DEAN_OFFICE') {
-      const myFacultyId = await getCallerFacultyId(req.user!.id);
-      if (!myFacultyId || current.facultyId !== myFacultyId) {
-        res.status(403).json({ error: 'Mozesz usuwac tylko kalendarz swojego wydzialu' });
-        return;
-      }
-    }
-    await prisma.semesterCalendar.delete({ where: { id: req.params.id } });
-    res.json({ message: 'Kalendarz usuniety' });
-  } catch (error) {
-    if (isNotFoundError(error)) {
-      res.status(404).json({ error: 'Kalendarz nie znaleziony' });
-      return;
-    }
-    console.error(error);
-    res.status(500).json({ error: 'Blad serwera' });
   }
-}
+
+  const newStart = startDate ? new Date(startDate) : current.startDate;
+  const newEnd = endDate ? new Date(endDate) : current.endDate;
+  if (Number.isNaN(newStart.getTime()) || Number.isNaN(newEnd.getTime())) {
+    throw new AppError(400, 'Nieprawidlowy format daty');
+  }
+  if (newStart >= newEnd) {
+    throw new AppError(400, 'Data poczatku musi byc wczesniejsza niz data konca');
+  }
+
+  // Nie pozwol skrocic semestru, jesli zostana zajecia poza nowym zakresem. Patrzymy
+  // wylacznie na wlasny wydzial i wlasny tryb studiow (tryb przez siatke — termin go
+  // nie zna): drugi tryb ma wlasny kalendarz i granice, wiec nie ma prawa blokowac tego.
+  const shrinkingStart = newStart > current.startDate;
+  const shrinkingEnd = newEnd < current.endDate;
+  if (shrinkingStart || shrinkingEnd) {
+    const cutEntry = await prisma.scheduleEntry.findFirst({
+      where: {
+        status: { not: 'CANCELLED' },
+        curriculumEntry: { curriculumVersion: { is: { studyMode: current.studyMode } } },
+        facultyId: current.facultyId,
+        OR: [
+          ...(shrinkingStart ? [{ date: { gte: current.startDate, lt: newStart } }] : []),
+          ...(shrinkingEnd ? [{ date: { gt: newEnd, lte: current.endDate } }] : []),
+        ],
+      },
+    });
+    if (cutEntry) {
+      throw new AppError(409, 'Nie mozna skrocic semestru — istnieja zajecia poza nowym zakresem dat');
+    }
+  }
+
+  const data = await prisma.semesterCalendar.update({
+    where: { id: req.params.id },
+    data: { startDate: newStart, endDate: newEnd, teachingWeeks: weeksBetween(newStart, newEnd) },
+    include: calendarInclude,
+  });
+  res.json({ data, message: 'Kalendarz zaktualizowany' });
+});
+
+export const remove = asyncHandler(async (req, res) => {
+  const current = await prisma.semesterCalendar.findUnique({ where: { id: req.params.id } });
+  if (!current) throw new AppError(404, 'Kalendarz nie znaleziony');
+  if (req.user!.role === 'DEAN_OFFICE') {
+    const myFacultyId = await getCallerFacultyId(req.user!.id);
+    if (!myFacultyId || current.facultyId !== myFacultyId) {
+      throw new AppError(403, 'Mozesz usuwac tylko kalendarz swojego wydzialu');
+    }
+  }
+  await prisma.semesterCalendar.delete({ where: { id: req.params.id } });
+  res.json({ message: 'Kalendarz usuniety' });
+});
