@@ -24,7 +24,41 @@ env:
   OWNER: robzuk # GHCR wymaga malych liter (login to robZuk)
 
 jobs:
+  # Bramka jakosci: build/push/deploy odpala sie DOPIERO gdy ten job przejdzie
+  # (build-push-deploy ma needs: test). Czerwone testy = brak wdrozenia.
+  test:
+    name: Testy (backend + frontend)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: '**/package-lock.json'
+      # --- backend ---
+      - run: npm ci
+        working-directory: backend
+      - run: npx prisma generate # typy Prismy — bez nich tsc padnie
+        working-directory: backend
+      - run: npm run lint
+        working-directory: backend
+      - run: npm test
+        working-directory: backend
+      - run: npm run build
+        working-directory: backend
+      # --- frontend ---
+      - run: npm ci
+        working-directory: frontend
+      - run: npm run lint
+        working-directory: frontend
+      - run: npm test
+        working-directory: frontend
+      - run: npm run build
+        working-directory: frontend
+
   build-push-deploy:
+    needs: test # <-- deploy dopiero po zielonych testach
     runs-on: ubuntu-latest
     # Sekret zmapowany na env — bo kontekst 'secrets' NIE jest dozwolony w 'if',
     # a 'env' juz tak. Dzieki temu krok deploy mozna warunkowac na obecnosc sekretu.
