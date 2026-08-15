@@ -34,7 +34,7 @@ konfliktów sal, prowadzących i grup.
 - **Dashboardy per rola:** kafelki, wykres obciążenia tygodnia, pasek statusów terminów;
   własny plan prowadzącego i studenta.
 - **Użytkownicy i role:** ADMIN / dziekanat / prowadzący / student, **impersonacja**
-  („zobacz jako…"), paleta poleceń **Ctrl+K**.
+  („zobacz jako…" — podgląd systemu oczami wybranej osoby).
 - **Auth:** JWT z tokenem odświeżania (unieważnialnym), role, ochrona tras.
 
 ## 🖥️ Zrzuty ekranu
@@ -58,7 +58,7 @@ konfliktów sal, prowadzących i grup.
 | **Frontend** | React 19, Vite, TypeScript, Tailwind 4, shadcn/ui, TanStack Query/Table, zustand, react-hook-form + zod, dnd-kit, Recharts |
 | **Backend** | Node.js 22, Express, TypeScript, Prisma ORM, JWT, bcrypt |
 | **Baza** | PostgreSQL 16 |
-| **Testy** | Vitest (logika domenowa, Prisma mockowana) |
+| **Testy** | Vitest (logika domenowa + API przez supertest, Prisma mockowana) |
 | **DevOps** | Docker (multi-stage), Docker Compose, nginx, GitHub Actions (CI + CD), GHCR, VPS (Ubuntu) |
 
 ## 🏗️ Architektura
@@ -125,6 +125,9 @@ flowchart LR
 - **Graceful shutdown** (obsługa SIGTERM → czyste zamknięcie ~0,15 s zamiast SIGKILL).
 - **HEALTHCHECK** w obrazie backendu (Docker wie, czy żyje sama aplikacja).
 - **HTTPS** na własnym VPS (Mikrus + darmowa domena `wykr.es`, SSL na brzegu).
+- **fail2ban** na serwerze — automatyczny ban IP przy próbach brute-force SSH.
+- **Cache SPA** w nginx — `index.html` bez cache (deploy widoczny od razu), zahashowane
+  assety cache'owane na długo.
 - Sekrety poza repo (`.env.prod` w `.gitignore`).
 
 ## ▶️ Uruchomienie lokalne
