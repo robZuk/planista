@@ -59,7 +59,7 @@ konfliktów sal, prowadzących i grup.
 | **Frontend** | React 19, Vite, TypeScript, Tailwind 4, shadcn/ui, TanStack Query/Table, zustand, react-hook-form + zod, dnd-kit, Recharts |
 | **Backend** | Node.js 22, Express, TypeScript, Prisma ORM, JWT, bcrypt, zod (walidacja wejścia), Swagger UI (OpenAPI 3.1) |
 | **Baza** | PostgreSQL 16 |
-| **Testy** | Vitest (logika domenowa + API przez supertest, Prisma mockowana) |
+| **Testy** | Vitest (logika domenowa + API przez supertest, Prisma mockowana), Playwright (E2E) |
 | **DevOps** | Docker (multi-stage), Docker Compose, nginx, GitHub Actions (CI + CD), GHCR, VPS (Ubuntu) |
 
 ## 🏗️ Architektura
@@ -106,6 +106,10 @@ flowchart LR
   zatrzymuje wdrożenie. Definicja testów jest raz, w **reusable workflow** (`tests.yml`),
   wołanym przez CI i CD.
 - **CI** (`ci.yml`): na push i PR — lint, testy i build backendu i frontu (osobne joby); brama dla PR-ów.
+- **E2E w CI** (`ci.yml`, job `e2e`): osobny job stawia **cały stack** (docker compose + migracje
+  + seed) i klika po prawdziwym UI (Playwright); raport HTML idzie jako artifact. **Świadomie
+  NIE jest bramką deployu** — deploy ma własną, niezależną bramkę na szybkich testach, a flaky
+  E2E nie może wstrzymać wdrożenia.
 - **CD** (`deploy.yml`): na push do `main` — testy → build obrazów → push do **GHCR** →
   **SSH na VPS** → `git pull` + `docker compose pull` + `up -d`. Zmiany tylko w dokumentacji
   nie wywołują deployu (`paths-ignore`).
@@ -163,9 +167,11 @@ Skróty w `Makefile`: `make dev`, `make prod`, `make down`, `make logs` (`make` 
 
 ## 🧪 Testy
 
-Testy jednostkowe i integracyjne na **Vitest** (bez bazy — Prisma mockowana, więc
-biegną szybko i deterministycznie). Uruchamiane też w CI jako **bramka przed
-wdrożeniem** — czerwony test zatrzymuje deploy.
+Piramida testów na trzech poziomach.
+
+**Jednostkowe i integracyjne — Vitest** (bez bazy: Prisma mockowana, więc biegną
+szybko i deterministycznie). W CI jako **bramka przed wdrożeniem** — czerwony test
+zatrzymuje deploy.
 
 ```bash
 cd backend && npm test     # walidacja planu (konflikty, okna czasu, izolacja semestru) + API (supertest)
@@ -174,19 +180,36 @@ cd frontend && npm test    # czysta logika domenowa (semester, konflikty, zakres
 
 - **Backend** — pełne pokrycie logiki walidacji (`validateEntry` / `validateTemplate`:
   wszystkie typy konfliktów, pojemność sali, okna trybu studiów, izolacja typu
-  semestru zima/lato) oraz testy API HTTP przez **supertest** (health, logowanie, strażnik auth).
+  semestru zima/lato) oraz testy API HTTP przez **supertest** (health, walidacja wejścia,
+  strażnik auth, fallback 404).
 - **Frontend** — czysta logika (`semester`, `scheduleConflicts`, `planScope`, `unplannedItems`).
+
+**E2E — Playwright** (`frontend/e2e/`): klikają po prawdziwym UI przeciwko działającemu
+stackowi — logowanie, walidacja formularza, ochrona tras, nawigacja.
+
+```bash
+docker compose up -d        # cały stack (migracje + seed: patrz frontend/e2e/README.md)
+cd frontend
+npx playwright install chromium
+npm run e2e                 # (e2e:ui — podgląd kroków, e2e:report — raport HTML)
+```
+
+W CI biegną w osobnym jobie (stawia stack, migracje + seed), **bez blokowania deployu**;
+raport HTML trafia jako artifact.
 
 ## 📁 Struktura
 
 ```
-backend/    Express + Prisma (routes / controllers / services / lib)
-frontend/   React + Vite (pages / api / store / lib / components)
+backend/    Express + Prisma (routes / controllers / services / lib / schemas / middleware)
+frontend/   React + Vite (pages / api / store / lib / components); e2e/ — testy Playwright
 db/         zrzut bazy + skrypt czyszczenia
 docs/       dokumentacja (model danych, deploy na VPS)
 .github/    workflows CI/CD
 docker-compose.yml · docker-compose.prod.yml · Makefile
 ```
+
+Dokumentacja API online: **[`/api/docs`](https://srv71-20250.wykr.es/api/docs)** (Swagger UI,
+spec OpenAPI 3.1 generowany z tych samych schematów zod, które walidują wejście).
 
 Szczegóły domenowe: [`docs/model-danych.md`](docs/model-danych.md) ·
 wdrożenie: [`docs/deploy-mikrus.md`](docs/deploy-mikrus.md).
