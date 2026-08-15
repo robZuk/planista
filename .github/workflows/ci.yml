@@ -1,5 +1,6 @@
 # CI — jakosc na push do main i na Pull Requestach. Testy (lint + test + build)
-# sa w reusable workflow tests.yml, wspoldzielonym z deploy.yml — tu tylko je wolamy.
+# sa w reusable workflow tests.yml, wspoldzielonym z deploy.yml — tu je wolamy.
+# Osobno biegna testy E2E (Playwright) — patrz komentarz przy jobie `e2e`.
 name: CI
 
 on:
@@ -10,3 +11,72 @@ on:
 jobs:
   test:
     uses: ./.github/workflows/tests.yml
+
+  # E2E (Playwright) — stawia CALY stack (db + backend + front) i klika po prawdziwym UI.
+  # SWIADOMIE NIE jest bramka deployu: deploy.yml ma wlasny, niezalezny gate na szybkich
+  # testach jednostkowych. Ten job to sygnal + raport HTML (artifact), a nie blokada
+  # wdrozenia — E2E bywaja flaky, wiec czerwony E2E nie ma prawa wstrzymac legalnego deployu.
+  e2e:
+    name: E2E (Playwright)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Pobierz kod
+        uses: actions/checkout@v5
+
+      # Dev-stack (docker-compose.yml) buduje sie ze zrodel — testujemy kod z tego commita,
+      # a nie obrazy z GHCR. up -d czeka na healthcheck bazy przed startem backendu.
+      - name: Postaw stack (db + backend + frontend)
+        run: docker compose up -d --build
+
+      # Backend w trybie dev (tsx watch) NIE robi migracji — baza startuje pusta, wiec
+      # nakladamy schemat i seed z konta demo (admin@umg.edu.pl), ktorego uzywaja testy.
+      - name: Migracje + seed bazy
+        run: |
+          docker compose exec -T backend npx prisma migrate deploy
+          docker compose exec -T backend npm run db:seed
+
+      - name: Czekaj az backend i frontend odpowiedza
+        run: |
+          for i in $(seq 1 60); do
+            [ "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:4001/health || true)" = "200" ] && echo "backend OK" && break
+            sleep 2
+          done
+          for i in $(seq 1 60); do
+            [ "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:5174 || true)" = "200" ] && echo "frontend OK" && break
+            sleep 2
+          done
+
+      - name: Node (dla Playwright na runnerze)
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Zaleznosci frontu
+        working-directory: frontend
+        run: npm ci
+
+      - name: Przegladarka Playwright (chromium + zaleznosci systemowe)
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
+
+      - name: Testy E2E
+        working-directory: frontend
+        run: npm run e2e
+
+      - name: Raport E2E (artifact)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: frontend/playwright-report/
+          retention-days: 7
+
+      - name: Logi stacku (przy porazce — do diagnozy)
+        if: failure()
+        run: docker compose logs --no-color --tail 200
+
+      - name: Sprzatanie stacku
+        if: always()
+        run: docker compose down -v
