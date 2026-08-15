@@ -20,9 +20,6 @@ generuje **grupy** studenckie, a następnie układa **wzorzec tygodnia** metodą
 przeciągnij-i-upuść i **generuje z niego terminy na cały semestr** — pilnując
 konfliktów sal, prowadzących i grup.
 
-Projekt powstał jako pełny materiał portfolio: **aplikacja + DevOps** (konteneryzacja,
-CI/CD, wdrożenie na własny VPS z HTTPS).
-
 ## ✨ Funkcje
 
 - **Plan zajęć — wzorzec tygodnia:** siatka dzień × godzina, układanie zajęć
@@ -154,18 +151,21 @@ Skróty w `Makefile`: `make dev`, `make prod`, `make down`, `make logs` (`make` 
 | Prowadzący | prowadzacy@umg.edu.pl | `Prowadzacy1234!` |
 | Student | student@umg.edu.pl | `Student1234!` |
 
-### Dane
-
-Baza zawiera realistyczny zbiór (rok 2024/2025): 21 prowadzących, 191 przedmiotów,
-81 grup, 28 sal, 243 wzorce tygodnia i 3327 terminów. Zrzut w `db/planista7-dump.sql`
-(oczyszczony z tokenów sesji, patrz [`db/README.md`](db/README.md)).
-
 ## 🧪 Testy
 
+Testy jednostkowe i integracyjne na **Vitest** (bez bazy — Prisma mockowana, więc
+biegną szybko i deterministycznie). Uruchamiane też w CI jako **bramka przed
+wdrożeniem** — czerwony test zatrzymuje deploy.
+
 ```bash
-cd backend && npm test     # logika planu: walidacja, konflikty, czas (Prisma mockowana)
+cd backend && npm test     # walidacja planu (konflikty, okna czasu, izolacja semestru) + API (supertest)
 cd frontend && npm test    # czysta logika domenowa (semester, konflikty, zakres planu)
 ```
+
+- **Backend** — pełne pokrycie logiki walidacji (`validateEntry` / `validateTemplate`:
+  wszystkie typy konfliktów, pojemność sali, okna trybu studiów, izolacja typu
+  semestru zima/lato) oraz testy API HTTP przez **supertest** (health, logowanie, strażnik auth).
+- **Frontend** — czysta logika (`semester`, `scheduleConflicts`, `planScope`, `unplannedItems`).
 
 ## 📁 Struktura
 
