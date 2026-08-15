@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import jwt from 'jsonwebtoken';
 import type { Role } from '@prisma/client';
 
@@ -43,7 +44,10 @@ export function signAccessToken(payload: AccessPayload, ttl: string = ACCESS_TTL
 }
 
 export function signRefreshToken(payload: RefreshPayload): string {
-  return jwt.sign(payload, refreshSecret(), { expiresIn: REFRESH_TTL });
+  // Losowy jti gwarantuje unikalnosc tokenu nawet przy dwoch logowaniach tego samego
+  // uzytkownika w tej samej sekundzie — bez niego JWT { sub, iat, exp } bylby bajtowo
+  // identyczny i drugi insert lecialby na kolizji RefreshToken.token @unique.
+  return jwt.sign(payload, refreshSecret(), { expiresIn: REFRESH_TTL, jwtid: randomUUID() });
 }
 
 /** Weryfikuje access token; rzuca, jesli niewazny/wygasly. */
