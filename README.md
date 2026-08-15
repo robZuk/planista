@@ -7,6 +7,7 @@
 [![Deploy](https://github.com/robZuk/planista/actions/workflows/deploy.yml/badge.svg)](https://github.com/robZuk/planista/actions/workflows/deploy.yml)
 
 🔗 **Demo na żywo:** [srv71-20250.wykr.es](https://srv71-20250.wykr.es) · 🔑 zaloguj się jako `admin@umg.edu.pl` / `Admin1234!`
+📖 **Dokumentacja API (Swagger):** [srv71-20250.wykr.es/api/docs](https://srv71-20250.wykr.es/api/docs)
 
 ![Plan zajęć — wzorzec tygodnia](docs/screenshots/plan-wzorzec.png)
 
@@ -56,7 +57,7 @@ konfliktów sal, prowadzących i grup.
 | Warstwa | Technologie |
 |---|---|
 | **Frontend** | React 19, Vite, TypeScript, Tailwind 4, shadcn/ui, TanStack Query/Table, zustand, react-hook-form + zod, dnd-kit, Recharts |
-| **Backend** | Node.js 22, Express, TypeScript, Prisma ORM, JWT, bcrypt, zod (walidacja wejścia) |
+| **Backend** | Node.js 22, Express, TypeScript, Prisma ORM, JWT, bcrypt, zod (walidacja wejścia), Swagger UI (OpenAPI 3.1) |
 | **Baza** | PostgreSQL 16 |
 | **Testy** | Vitest (logika domenowa + API przez supertest, Prisma mockowana) |
 | **DevOps** | Docker (multi-stage), Docker Compose, nginx, GitHub Actions (CI + CD), GHCR, VPS (Ubuntu) |

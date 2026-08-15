@@ -15,6 +15,8 @@ import groupsRoutes from './routes/groups';
 import scheduleRoutes from './routes/schedule';
 import dashboardRoutes from './routes/dashboard';
 import usersRoutes from './routes/users';
+import swaggerUi from 'swagger-ui-express';
+import { openApiDocument } from './openapi';
 import { errorHandler } from './middleware/errorHandler';
 
 /**
@@ -41,6 +43,13 @@ export function createApp(): Express {
   app.get('/health', (_req: Request, res: Response) => {
     res.json({ data: { status: 'ok', time: new Date().toISOString() } });
   });
+
+  // Dokumentacja API (OpenAPI 3.1) — publiczna, to tylko opis interfejsu.
+  // Swagger UI pod /api/docs, surowy spec pod /api/docs.json.
+  app.get('/api/docs.json', (_req: Request, res: Response) => {
+    res.json(openApiDocument);
+  });
+  app.use('/api/docs', swaggerUi.serve, swaggerUi.setup(openApiDocument));
 
   // API — wszystkie trasy pod prefiksem /api.
   app.use('/api/auth', authRoutes);
