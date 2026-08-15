@@ -38,7 +38,7 @@ jobs:
       MIKRUS_HOST: ${{ secrets.MIKRUS_HOST }}
     steps:
       - name: Pobierz kod
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       # Buildx (sterownik docker-container) — wymagany do cache-to: type=gha.
       - name: Ustaw Buildx
