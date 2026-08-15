@@ -24,38 +24,10 @@ env:
   OWNER: robzuk # GHCR wymaga malych liter (login to robZuk)
 
 jobs:
-  # Bramka jakosci: build/push/deploy odpala sie DOPIERO gdy ten job przejdzie
-  # (build-push-deploy ma needs: test). Czerwone testy = brak wdrozenia.
+  # Bramka jakosci: testy z reusable workflow (te same co w ci.yml, definicja w jednym
+  # miejscu). build-push-deploy ma needs: test, wiec deploy NIE odpali sie, gdy testy padna.
   test:
-    name: Testy (backend + frontend)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: '**/package-lock.json'
-      # --- backend ---
-      - run: npm ci
-        working-directory: backend
-      - run: npx prisma generate # typy Prismy — bez nich tsc padnie
-        working-directory: backend
-      - run: npm run lint
-        working-directory: backend
-      - run: npm test
-        working-directory: backend
-      - run: npm run build
-        working-directory: backend
-      # --- frontend ---
-      - run: npm ci
-        working-directory: frontend
-      - run: npm run lint
-        working-directory: frontend
-      - run: npm test
-        working-directory: frontend
-      - run: npm run build
-        working-directory: frontend
+    uses: ./.github/workflows/tests.yml
 
   build-push-deploy:
     needs: test # <-- deploy dopiero po zielonych testach
