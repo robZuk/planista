@@ -56,7 +56,7 @@ konfliktów sal, prowadzących i grup.
 | Warstwa | Technologie |
 |---|---|
 | **Frontend** | React 19, Vite, TypeScript, Tailwind 4, shadcn/ui, TanStack Query/Table, zustand, react-hook-form + zod, dnd-kit, Recharts |
-| **Backend** | Node.js 22, Express, TypeScript, Prisma ORM, JWT, bcrypt |
+| **Backend** | Node.js 22, Express, TypeScript, Prisma ORM, JWT, bcrypt, zod (walidacja wejścia) |
 | **Baza** | PostgreSQL 16 |
 | **Testy** | Vitest (logika domenowa + API przez supertest, Prisma mockowana) |
 | **DevOps** | Docker (multi-stage), Docker Compose, nginx, GitHub Actions (CI + CD), GHCR, VPS (Ubuntu) |
@@ -121,6 +121,9 @@ flowchart LR
 - **Kontenery jako nie-root** (least privilege) — backend jako użytkownik `node`,
   frontend na obrazie `nginx-unprivileged` (uid 101). Ewentualna kompromitacja
   procesu nie daje roota w kontenerze.
+- **Walidacja wejścia** (zod) na trasach zapisu API + **centralny handler błędów**
+  (jedno miejsce zamiany wyjątku na odpowiedź HTTP) — m.in. wymóg min. długości hasła
+  i formatu e-mail już po stronie serwera, nie tylko formularza.
 - **Rate-limit** na logowaniu + `trust proxy` (prawdziwe IP zza nginx).
 - **Graceful shutdown** (obsługa SIGTERM → czyste zamknięcie ~0,15 s zamiast SIGKILL).
 - **HEALTHCHECK** w obrazie backendu (Docker wie, czy żyje sama aplikacja).
