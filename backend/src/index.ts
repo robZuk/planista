@@ -15,6 +15,7 @@ import groupsRoutes from './routes/groups';
 import scheduleRoutes from './routes/schedule';
 import dashboardRoutes from './routes/dashboard';
 import usersRoutes from './routes/users';
+import { errorHandler } from './middleware/errorHandler';
 
 /**
  * Buduje instancje aplikacji Express wraz z globalnymi middleware i trasami.
@@ -55,6 +56,16 @@ export function createApp(): Express {
   app.use('/api/schedule', scheduleRoutes);
   app.use('/api/dashboard', dashboardRoutes);
   app.use('/api/users', usersRoutes);
+
+  // Nieznana trasa -> 404 w spojnym ksztalcie { error }.
+  app.use((_req: Request, res: Response) => {
+    res.status(404).json({ error: 'Nie znaleziono zasobu' });
+  });
+
+  // Centralny handler bledow — MUSI byc ostatni (po trasach). Express rozpoznaje go
+  // po 4 argumentach. Kontrolery/middleware rzucaja blad (AppError/ZodError/Prisma),
+  // a on zamienia go na wlasciwa odpowiedz HTTP.
+  app.use(errorHandler);
 
   return app;
 }

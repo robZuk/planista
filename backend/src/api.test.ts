@@ -36,6 +36,22 @@ describe('API — logowanie', () => {
       .send({ email: 'ktos@umg.edu.pl', password: 'zle-haslo' });
     expect(res.status).toBe(401);
   });
+
+  it('POST /api/auth/login zly format emaila -> 400 (walidacja zod przez errorHandler)', async () => {
+    const res = await request(app)
+      .post('/api/auth/login')
+      .send({ email: 'to-nie-email', password: 'cokolwiek' });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/email/i);
+  });
+});
+
+describe('API — nieznana trasa', () => {
+  it('GET /api/nie-ma-takiej -> 404 { error } (fallback + errorHandler)', async () => {
+    const res = await request(app).get('/api/nie-ma-takiej');
+    expect(res.status).toBe(404);
+    expect(res.body.error).toBeTruthy();
+  });
 });
 
 describe('API — straznik uwierzytelniania', () => {

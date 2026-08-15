@@ -5,6 +5,8 @@ import * as generator from '../controllers/scheduleGenerator.controller';
 import * as entries from '../controllers/scheduleEntry.controller';
 import * as calendars from '../controllers/semesterCalendar.controller';
 import * as holidays from '../controllers/publicHoliday.controller';
+import { validateBody } from '../middleware/validate';
+import { publicHolidayCreateSchema } from '../schemas/publicHoliday';
 
 const router = Router();
 
@@ -42,7 +44,7 @@ router.delete('/calendars/:id', authenticate, planners, calendars.remove);
 
 // ─── Dni wolne ───────────────────────────────────────────────
 router.get('/holidays', authenticate, viewAll, holidays.getAll);
-router.post('/holidays', authenticate, planners, holidays.create);
+router.post('/holidays', authenticate, planners, validateBody(publicHolidayCreateSchema), holidays.create);
 router.delete('/holidays/:id', authenticate, planners, holidays.remove);
 
 export default router;
