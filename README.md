@@ -95,16 +95,19 @@ To rdzeń projektu — pełny łańcuch od kodu do działającej produkcji.
 
 ```mermaid
 flowchart LR
-    push["git push · main"] --> ci["CI<br/>lint + test + build"]
-    push --> cd["CD"]
-    cd --> build["build obrazów"] --> ghcr[("GHCR<br/>rejestr obrazów")]
-    ghcr --> deploy["deploy przez SSH"]
-    deploy --> prod["docker compose pull + up -d<br/>(VPS)"]
+    push["git push · main"] --> test["testy<br/>lint + test + build<br/>(tests.yml)"]
+    test -->|zielone| build["build obrazów"] --> ghcr[("GHCR<br/>rejestr obrazów")]
+    ghcr --> deploy["deploy przez SSH"] --> prod["docker compose pull + up -d<br/>(VPS)"]
+    test -.->|czerwone| stop["STOP — brak wdrożenia"]
 ```
 
-- **CI** (`ci.yml`): na push i PR — lint, testy i build backendu i frontu (osobne joby).
-- **CD** (`deploy.yml`): na push do `main` — build obrazów → push do **GHCR** →
-  **SSH na VPS** → `git pull` + `docker compose pull` + `up -d`. Efekt: `git push` = wdrożenie.
+- **Bramka jakości:** deploy rusza **dopiero po zielonych testach** (`needs`) — czerwony test
+  zatrzymuje wdrożenie. Definicja testów jest raz, w **reusable workflow** (`tests.yml`),
+  wołanym przez CI i CD.
+- **CI** (`ci.yml`): na push i PR — lint, testy i build backendu i frontu (osobne joby); brama dla PR-ów.
+- **CD** (`deploy.yml`): na push do `main` — testy → build obrazów → push do **GHCR** →
+  **SSH na VPS** → `git pull` + `docker compose pull` + `up -d`. Zmiany tylko w dokumentacji
+  nie wywołują deployu (`paths-ignore`).
 
 ### Konteneryzacja
 
