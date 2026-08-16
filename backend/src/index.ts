@@ -20,6 +20,7 @@ import { openApiDocument } from './openapi';
 import { errorHandler } from './middleware/errorHandler';
 import { httpLogger } from './middleware/httpLogger';
 import { logger } from './lib/logger';
+import { initSentry, Sentry } from './lib/sentry';
 
 /**
  * Buduje instancje aplikacji Express wraz z globalnymi middleware i trasami.
@@ -87,6 +88,9 @@ export function createApp(): Express {
 
 // Uruchamiamy serwer tylko gdy plik jest odpalany bezposrednio (a nie importowany w tescie).
 if (require.main === module) {
+  // Error-tracking startujemy przed serwerem (no-op gdy brak SENTRY_DSN).
+  initSentry();
+
   const app = createApp();
   const port = Number(process.env.PORT ?? 4001);
   const server = app.listen(port, () => {
@@ -99,6 +103,8 @@ if (require.main === module) {
   const shutdown = (signal: string) => {
     logger.info({ signal }, 'Zamykam serwer...');
     server.close(async () => {
+      // Dosylamy zalegle zdarzenia do error-trackingu przed wyjsciem (no-op bez DSN).
+      await Sentry.close(2000);
       await prisma.$disconnect();
       process.exit(0);
     });

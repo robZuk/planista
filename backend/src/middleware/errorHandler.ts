@@ -3,6 +3,7 @@ import type { Logger } from 'pino';
 import { ZodError } from 'zod';
 import { AppError } from '../lib/AppError';
 import { logger } from '../lib/logger';
+import { Sentry } from '../lib/sentry';
 import { isUniqueConstraintError, isNotFoundError, isForeignKeyError } from '../lib/prismaErrors';
 
 /**
@@ -39,7 +40,17 @@ export function errorHandler(err: unknown, req: Request, res: Response, _next: N
     return;
   }
   // req.log (child logger z pino-http) niesie request-id; poza cyklem zadania fallback na logger.
+  const requestId = String((req as unknown as { id?: string }).id ?? '');
   const log: Logger = (req as unknown as { log?: Logger }).log ?? logger;
   log.error({ err }, 'Nieobsluzony blad serwera');
+
+  // Zgloszenie do error-trackingu — TYLKO nieobsluzone 500 (oczekiwane 4xx wyzej juz wyszly).
+  // No-op gdy SENTRY_DSN nieustawiony. Bezpieczny kontekst (metoda, URL, request-id);
+  // cialo zadania jest usuwane w beforeSend (patrz lib/sentry.ts).
+  Sentry.captureException(err, {
+    tags: { requestId },
+    extra: { method: req.method, url: req.url },
+  });
+
   res.status(500).json({ error: 'Blad serwera' });
 }
