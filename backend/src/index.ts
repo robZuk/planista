@@ -18,6 +18,8 @@ import usersRoutes from './routes/users';
 import swaggerUi from 'swagger-ui-express';
 import { openApiDocument } from './openapi';
 import { errorHandler } from './middleware/errorHandler';
+import { httpLogger } from './middleware/httpLogger';
+import { logger } from './lib/logger';
 
 /**
  * Buduje instancje aplikacji Express wraz z globalnymi middleware i trasami.
@@ -32,6 +34,10 @@ export function createApp(): Express {
   // wszystkich pod jednym IP proxy. Wartosc 1 (nie `true`) nie pozwala podszyc sie
   // naglowkiem, gdy ruch idzie prosto do backendu.
   app.set('trust proxy', 1);
+
+  // Logowanie kazdego zadania (pino-http) — wczesnie, zeby objac wszystko ponizej.
+  // Nadaje request-id i loguje status + czas odpowiedzi; udostepnia req.log.
+  app.use(httpLogger);
 
   // CORS — pozwala frontendowi (inny origin/port) wolac to API.
   app.use(cors({ origin: process.env.CORS_ORIGIN ?? 'http://localhost:5174' }));
@@ -84,14 +90,14 @@ if (require.main === module) {
   const app = createApp();
   const port = Number(process.env.PORT ?? 4001);
   const server = app.listen(port, () => {
-    console.log(`[planista7] Backend nasluchuje na http://localhost:${port}`);
+    logger.info({ port }, `Backend nasluchuje na http://localhost:${port}`);
   });
 
   // Graceful shutdown — na SIGTERM (docker stop) / SIGINT (Ctrl+C) domykamy serwer
   // i rozlaczamy Prisme, zamiast czekac na twardy SIGKILL. Node jako PID 1 ignoruje
   // sygnaly bez jawnego handlera, wiec bez tego kontener stopuje sie dopiero po ~10s.
   const shutdown = (signal: string) => {
-    console.log(`[planista7] ${signal} — zamykam serwer...`);
+    logger.info({ signal }, 'Zamykam serwer...');
     server.close(async () => {
       await prisma.$disconnect();
       process.exit(0);
