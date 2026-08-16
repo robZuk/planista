@@ -142,6 +142,24 @@ store'y zustand (współdzielone między stronami).
 - **Daty semestru:** generator używa **południa UTC** (odporność na DST).
 - **TypeScript:** `strict` po obu stronach; backend CommonJS, frontend ESM.
 
+### Logowanie
+
+Backend loguje przez **pino** (`src/lib/logger.ts`), nie przez `console.*`.
+
+- **W obrębie żądania używaj `req.log`** — niesie `request-id`, więc logi jednego
+  żądania są powiązane (jest otypowany na `Request`). **Poza żądaniem** (start serwera,
+  skrypty, zadania w tle) → `import { logger } from '.../lib/logger'`.
+- **Kolejność argumentów pino: obiekt PIERWSZY, wiadomość DRUGA** —
+  `req.log.info({ userId }, 'zalogowano')`, nie `('zalogowano', { userId })`.
+- **Błędy loguj jako `{ err }`** (`req.log.error({ err }, '...')`) — pino serializuje stack.
+  Nieobsłużone 500 loguje już `errorHandler`; ręcznie dokładasz tylko kontekst domenowy.
+- **Poziomy:** `debug` (dev), `info` (zdarzenia biznesowe), `warn` (podejrzane / 4xx),
+  `error` (500 / wyjątek). Próg z `LOG_LEVEL` (prod domyślnie `info`, dev `debug`, test `silent`).
+- **Nigdy nie loguj sekretów** (hasła, tokeny, całe wrażliwe ciała żądań).
+- **`pino-http` loguje każde żądanie automatycznie** (metoda/URL/status/czas) — ręczne
+  `req.log.*` dodajesz tylko dla dodatkowego kontekstu. `pino-pretty` jest **tylko w dev**
+  (devDependency); prod (`NODE_ENV=production`) daje surowy JSON.
+
 ## Uwaga o strefie sieci
 
 Aplikacja wymaga zalogowania (JWT). Endpointy `/api/*` bez ważnego tokenu zwracają
