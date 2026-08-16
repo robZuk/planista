@@ -8,6 +8,7 @@
 
 🔗 **Demo na żywo:** [srv71-20250.wykr.es](https://srv71-20250.wykr.es) · 🔑 zaloguj się jako `admin@umg.edu.pl` / `Admin1234!`
 📖 **Dokumentacja API (Swagger):** [srv71-20250.wykr.es/api/docs](https://srv71-20250.wykr.es/api/docs)
+📊 **Status / uptime na żywo:** [planista.betteruptime.com](https://planista.betteruptime.com/)
 
 ![Plan zajęć — wzorzec tygodnia](docs/screenshots/plan-wzorzec.png)
 
@@ -60,7 +61,7 @@ konfliktów sal, prowadzących i grup.
 | **Backend** | Node.js 22, Express, TypeScript, Prisma ORM, JWT, bcrypt, zod (walidacja wejścia), Swagger UI (OpenAPI 3.1), pino (logi strukturalne) |
 | **Baza** | PostgreSQL 16 |
 | **Testy** | Vitest (logika domenowa + API przez supertest, Prisma mockowana), Playwright (E2E) |
-| **DevOps** | Docker (multi-stage), Docker Compose, nginx, GitHub Actions (CI + CD), GHCR, VPS (Ubuntu) |
+| **DevOps** | Docker (multi-stage), Docker Compose, nginx, GitHub Actions (CI + CD), GHCR, VPS (Ubuntu), Better Stack (uptime + status page) |
 
 ## 🏗️ Architektura
 
@@ -132,7 +133,10 @@ flowchart LR
 - **Logi strukturalne** (pino + pino-http) — każde żądanie logowane (metoda, URL, status,
   **czas odpowiedzi**) z **request-id** (nagłówek `x-request-id`); w dev czytelne kolorowo,
   na prod surowy JSON gotowy pod agregację. Nieobsłużone 500 lecą do logu ze stackiem.
-  *(Uptime i error-tracking przez SaaS — w planie.)*
+- **Monitoring uptime** — zewnętrzny (Better Stack, co 3 min, **poza serwerem** — monitor nie
+  pada razem z monitorowanym boxem) pinguje `/health`, alertuje przy awarii; publiczna
+  **status-page**: [planista.betteruptime.com](https://planista.betteruptime.com/).
+  *(Error-tracking przez SaaS — w planie.)*
 - **Rate-limit** na logowaniu + `trust proxy` (prawdziwe IP zza nginx).
 - **Graceful shutdown** (obsługa SIGTERM → czyste zamknięcie ~0,15 s zamiast SIGKILL).
 - **HEALTHCHECK** w obrazie backendu (Docker wie, czy żyje sama aplikacja).
