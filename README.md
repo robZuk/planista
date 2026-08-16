@@ -57,7 +57,7 @@ konfliktów sal, prowadzących i grup.
 | Warstwa | Technologie |
 |---|---|
 | **Frontend** | React 19, Vite, TypeScript, Tailwind 4, shadcn/ui, TanStack Query/Table, zustand, react-hook-form + zod, dnd-kit, Recharts |
-| **Backend** | Node.js 22, Express, TypeScript, Prisma ORM, JWT, bcrypt, zod (walidacja wejścia), Swagger UI (OpenAPI 3.1) |
+| **Backend** | Node.js 22, Express, TypeScript, Prisma ORM, JWT, bcrypt, zod (walidacja wejścia), Swagger UI (OpenAPI 3.1), pino (logi strukturalne) |
 | **Baza** | PostgreSQL 16 |
 | **Testy** | Vitest (logika domenowa + API przez supertest, Prisma mockowana), Playwright (E2E) |
 | **DevOps** | Docker (multi-stage), Docker Compose, nginx, GitHub Actions (CI + CD), GHCR, VPS (Ubuntu) |
@@ -129,6 +129,10 @@ flowchart LR
 - **Walidacja wejścia** (zod) na trasach zapisu API + **centralny handler błędów**
   (jedno miejsce zamiany wyjątku na odpowiedź HTTP) — m.in. wymóg min. długości hasła
   i formatu e-mail już po stronie serwera, nie tylko formularza.
+- **Logi strukturalne** (pino + pino-http) — każde żądanie logowane (metoda, URL, status,
+  **czas odpowiedzi**) z **request-id** (nagłówek `x-request-id`); w dev czytelne kolorowo,
+  na prod surowy JSON gotowy pod agregację. Nieobsłużone 500 lecą do logu ze stackiem.
+  *(Uptime i error-tracking przez SaaS — w planie.)*
 - **Rate-limit** na logowaniu + `trust proxy` (prawdziwe IP zza nginx).
 - **Graceful shutdown** (obsługa SIGTERM → czyste zamknięcie ~0,15 s zamiast SIGKILL).
 - **HEALTHCHECK** w obrazie backendu (Docker wie, czy żyje sama aplikacja).
