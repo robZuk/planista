@@ -61,7 +61,7 @@ konfliktów sal, prowadzących i grup.
 | **Backend** | Node.js 22, Express, TypeScript, Prisma ORM, JWT, bcrypt, zod (walidacja wejścia), Swagger UI (OpenAPI 3.1), pino (logi strukturalne) |
 | **Baza** | PostgreSQL 16 |
 | **Testy** | Vitest (logika domenowa + API przez supertest, Prisma mockowana), Playwright (E2E) |
-| **DevOps** | Docker (multi-stage), Docker Compose, nginx, GitHub Actions (CI + CD), GHCR, VPS (Ubuntu), Better Stack (uptime + status page) |
+| **DevOps** | Docker (multi-stage), Docker Compose, nginx, GitHub Actions (CI + CD), GHCR, VPS (Ubuntu), Better Stack (uptime + status page + error-tracking) |
 
 ## 🏗️ Architektura
 
@@ -136,7 +136,10 @@ flowchart LR
 - **Monitoring uptime** — zewnętrzny (Better Stack, co 3 min, **poza serwerem** — monitor nie
   pada razem z monitorowanym boxem) pinguje `/health`, alertuje przy awarii; publiczna
   **status-page**: [planista.betteruptime.com](https://planista.betteruptime.com/).
-  *(Error-tracking przez SaaS — w planie.)*
+- **Error-tracking** (Better Stack, SDK Sentry-kompatybilne) — nieobsłużone **500** trafiają
+  do zewnętrznego systemu ze stackiem i kontekstem (metoda, URL, request-id, `release`=commit),
+  z grupowaniem i alertami. **Prywatnie:** `beforeSend` usuwa dane żądania, więc ciało (m.in.
+  hasło z `/login`) nigdy nie opuszcza serwera. Włączane tylko gdy ustawiony `SENTRY_DSN`.
 - **Rate-limit** na logowaniu + `trust proxy` (prawdziwe IP zza nginx).
 - **Graceful shutdown** (obsługa SIGTERM → czyste zamknięcie ~0,15 s zamiast SIGKILL).
 - **HEALTHCHECK** w obrazie backendu (Docker wie, czy żyje sama aplikacja).
