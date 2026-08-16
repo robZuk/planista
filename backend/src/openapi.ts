@@ -23,10 +23,21 @@ import { userCreateSchema, userUpdateSchema } from './schemas/user';
  * `z.toJSONSchema`. Zmiana schematu zod = automatyczna zmiana w dokumentacji, bez dryfu.
  */
 
+// Pola email z zod dostaja w JSON Schema dlugi `pattern` (regex) — Swagger UI robi z
+// niego monstrualny "przykladowy" string. Usuwamy pattern, zostawiajac `format: email`,
+// dzieki czemu UI generuje czytelne `user@example.com`.
+function stripEmailPattern(node: unknown): void {
+  if (!node || typeof node !== 'object') return;
+  const obj = node as Record<string, unknown>;
+  if (obj.format === 'email' && 'pattern' in obj) delete obj.pattern;
+  for (const value of Object.values(obj)) stripEmailPattern(value);
+}
+
 // zod -> JSON Schema; usuwamy klucz $schema, ktorego OpenAPI components nie potrzebuje.
 function toJson(schema: ZodType): Record<string, unknown> {
   const s = z.toJSONSchema(schema) as Record<string, unknown>;
   delete s.$schema;
+  stripEmailPattern(s);
   return s;
 }
 
@@ -126,7 +137,16 @@ export const openApiDocument = {
         tags: ['Auth'],
         summary: 'Logowanie — zwraca access + refresh token',
         security: [],
-        requestBody: jsonBody('LoginRequest'),
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: ref('LoginRequest'),
+              // Gotowe konto demo — po "Try it out" body jest od razu wypelnione.
+              example: { email: 'admin@umg.edu.pl', password: 'Admin1234!' },
+            },
+          },
+        },
         responses: {
           200: dataResp('Tokeny i dane uzytkownika'),
           400: errResp('Blad walidacji (np. zly format email)'),
