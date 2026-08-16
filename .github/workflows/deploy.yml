@@ -72,6 +72,11 @@ jobs:
           tags: |
             ${{ env.REGISTRY }}/${{ env.OWNER }}/planista-frontend:latest
             ${{ env.REGISTRY }}/${{ env.OWNER }}/planista-frontend:${{ github.sha }}
+          # VITE_* wpiekaja sie do bundla przy build (build-time). DSN frontendu jest
+          # publiczny (widoczny w bundlu) — brak sekretu = error-tracking frontu wylaczony.
+          build-args: |
+            VITE_SENTRY_DSN=${{ secrets.VITE_SENTRY_DSN }}
+            VITE_GIT_SHA=${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 

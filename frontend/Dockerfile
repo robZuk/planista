@@ -14,6 +14,13 @@ CMD ["npm", "run", "dev", "--", "--host"]
 
 # ---- build: produkcyjny build SPA -> dist/ ----
 FROM base AS build
+# Zmienne VITE_* wpiekaja sie do bundla przy `vite build` -> musza byc TU (build-time),
+# przekazane jako build-arg z CI. VITE_SENTRY_DSN jest publiczny (widoczny w bundlu) —
+# to nie sekret. Brak = error-tracking frontendu wylaczony.
+ARG VITE_SENTRY_DSN
+ARG VITE_GIT_SHA
+ENV VITE_SENTRY_DSN=$VITE_SENTRY_DSN
+ENV VITE_GIT_SHA=$VITE_GIT_SHA
 COPY . .
 RUN npm run build
 
